@@ -3,4 +3,20 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; }
-body { margin: 0; background: #F1F1D3; }
+body {
+  margin: 0;
+  background: #F2F1EC;
+  color: #111;
+  font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* V1 keeps its original look */
+.v1 { font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; }
+
+@layer components {
+  .nm-btn-dark  { @apply h-8 px-3 rounded-md border border-white/25 text-white font-semibold hover:bg-white/10 whitespace-nowrap; }
+  .nm-btn-light { @apply h-8 px-3 rounded-md bg-white text-black font-semibold hover:bg-white/90 whitespace-nowrap; }
+}
+/* larger controls inside the V2 tuning sheet (Field is shared with V1) */
+.tune .text-xs { font-size: 14px; line-height: 1.4; }
+.tune label { padding-top: 5px; padding-bottom: 5px; border-bottom: 1px solid #EEEDE8; }

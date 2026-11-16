@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   SEED_HEX, SEED_NAMES, SEED_RIVERS, SEED_NOCROSS, ZONES, ZONE_COLORS, ZONE_OF,
   LINES, V2D, GRID, TERRAIN, R, cx, cy, parseId, edgeKey, neighbors, sharedEdge, hexDist,
@@ -17,7 +18,20 @@ const ago = (t) => {
   return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 };
 
-export default function GameInfluence({ hidden }) {
+/* MTA-style round line badges */
+const BULLET = { 0: "B", 1: "8", 2: "6", 3: "Lx", 4: "F", 5: "N", 6: "C" };
+const Bullet = ({ lid, size = 24, dim }) => {
+  const l = LINES.find((x) => x.id === lid);
+  return (
+    <span className="inline-flex items-center justify-center rounded-full font-bold text-white shrink-0 select-none"
+          style={{ width: size, height: size, background: l?.color || "#333", fontSize: size * (String(BULLET[lid]).length > 1 ? 0.42 : 0.56),
+                   opacity: dim ? 0.35 : 1, letterSpacing: "-0.03em" }}>
+      {BULLET[lid]}
+    </span>
+  );
+};
+
+export default function GameInfluence({ hidden, slot }) {
   const [roomInput, setRoomInput] = useState("");
   const [tab, setTab] = useState("play");
   const [mode, setMode] = useState("track");
@@ -30,6 +44,11 @@ export default function GameInfluence({ hidden }) {
   const [reveal, setReveal] = useState(true);
   const [status, setStatus] = useState("");
   const [showTally, setShowTally] = useState(false);
+  const [tallySeen, setTallySeen] = useState(false);
+  const [menu, setMenu] = useState(null);
+  const [side, setSide] = useState("lines");
+  const [adjust, setAdjust] = useState(false);
+  useEffect(() => { if (!status) return; const t = setTimeout(() => setStatus(""), 4000); return () => clearTimeout(t); }, [status]);
   const [zoom, setZoom] = useState(() => (typeof window !== "undefined" && window.innerWidth < 640 ? 1.6 : 1));   // bigger hexes to tap on a phone
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
@@ -50,7 +69,8 @@ export default function GameInfluence({ hidden }) {
   const edit = useCallback((mut) => commit(mut, null, { quiet: true }), [commit]);
   const syncNow = () => {};
   const undo = () => { const r = T.undo(); if (r?.why) setStatus(r.why); };
-  const hexName = (h) => state.map?.names?.[h] || h;
+  const hexName = (h) => state.map?.names?.[h] || "";
+  const trackAt = (a, b) => { const n = [hexName(a), hexName(b)].filter(Boolean); return n.length ? ` near ${n.join(" / ")}` : ""; };
 
   /* what other players changed since my last move */
   const changed = useMemo(() => {
@@ -154,7 +174,7 @@ export default function GameInfluence({ hidden }) {
         commit((s2) => {
           if (trackOwner(s2, k) === activeLine) delete s2.track[k];
           else s2.track[k] = [activeLine];
-        }, `${removing ? "removed" : "laid"} ${lineOf(activeLine).name} track ${hexName(pending)} – ${hexName(id)}`);
+        }, `${removing ? "removed" : "laid"} ${lineOf(activeLine).name} track${trackAt(pending, id)}`);
         setPending(id); setStatus(""); return;
       }
 
@@ -179,7 +199,7 @@ export default function GameInfluence({ hidden }) {
         if (s2.settings.ownership === "hex") { const ix = s2.bag.lastIndexOf(activeLine); if (ix >= 0) { s2.bag.splice(ix, 1); s2.onboard.push(activeLine); } }
         s2.track[k] = [activeLine];
         if (s2.settings.autoAP) s2.turn.ap = Math.max(0, s2.turn.ap - 1);
-      }, `laid ${lineOf(activeLine).name} track ${hexName(pending)} – ${hexName(id)}`);
+      }, `laid ${lineOf(activeLine).name} track${trackAt(pending, id)}`);
       setPending(id); setStatus(""); return;
     }
     if (mode === "station") {
@@ -188,7 +208,7 @@ export default function GameInfluence({ hidden }) {
         commit((s2) => {
           if (s2.stations[id] && s2.stations[id].o === activeLine) delete s2.stations[id];
           else s2.stations[id] = { o: activeLine };
-        }, `${removing ? "removed" : "built"} a ${lineOf(activeLine).name} station at ${hexName(id)}`);
+        }, `${removing ? "removed" : "built"} a ${lineOf(activeLine).name} station${hexName(id) ? " at " + hexName(id) : ""}`);
         setStatus(""); return;
       }
       if (!state.stations[id]) {
@@ -207,7 +227,7 @@ export default function GameInfluence({ hidden }) {
         for (let i = 0; i < c - burn; i++) s2.bag.push(activeLine);
         s2.stations[id] = { o: activeLine };
         if (s2.settings.autoAP) s2.turn.ap = Math.max(0, s2.turn.ap - 1);
-      }, `${lineOf(activeLine).name} station at ${hexName(id)}`);
+      }, `${lineOf(activeLine).name} station${hexName(id) ? " at " + hexName(id) : ""}`);
       return;
     }
   };
@@ -320,70 +340,142 @@ export default function GameInfluence({ hidden }) {
     </label>
   );
 
-  return (
-    <div className="w-full text-stone-900" style={{ display: hidden ? "none" : "block", background: "#F1F1D3" }}>
-      <div className="px-4 py-2.5 border-b-2 border-stone-800 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex rounded-sm overflow-hidden border border-stone-800">
-          {[["play", "Play"], ["map", "Edit map"]].map(([t, l]) => (
-            <button key={t} onClick={() => { setTab(t); setPending(null); setMode(t === "play" ? "track" : "terrain"); }}
-              className={`px-3 py-1 text-sm ${tab === t ? "bg-stone-800 text-stone-50" : "hover:bg-white/60"}`}>{l}</button>
-          ))}
-        </div>
-        <button onClick={() => setShowZones((z) => !z)} className={`px-2.5 py-1 text-sm rounded-sm border ${showZones ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>Zones</button>
-        <button onClick={() => setShowTune((x) => !x)} className={`px-2.5 py-1 text-sm rounded-sm border ${showTune ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>Tuning</button>
-        <button onClick={() => { if (!confirm(room ? `Start a new game at table "${room}"? This resets the board for everyone.` : "Start a new game?")) return;
-                                  commit(() => { const f = makeV2(S); f.settings = { ...S }; f.players = f.players.map((p, i) => state.players[i] ? { ...p, name: state.players[i].name } : p); return f; }, "started a new game"); }}
-                className="px-2.5 py-1 text-sm rounded-sm border border-stone-400">New setup</button>
-        <div className="ml-auto flex items-center gap-2 text-sm">
-          {room ? (
-            <>
-              <span className="text-stone-600">Table <b className="text-stone-900">{room}</b></span>
-              <button onClick={() => { const u = shareLink(room); navigator.clipboard?.writeText(u).then(() => setStatus("link copied — send it to the other players"), () => window.prompt("Copy this link:", u)); }}
-                      className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Copy invite link</button>
-              <button onClick={() => { if (confirm("Leave this table? You can rejoin with the same code.")) join(""); }}
-                      className="px-2.5 py-1 border border-stone-500 rounded-sm">Leave</button>
-            </>
-          ) : (
-            <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const c = cleanCode(roomInput); if (c) { join(c); setStatus(""); } }}>
-              <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="table code, e.g. friday"
-                     className="w-44 bg-white/60 border border-stone-400 px-2 py-1 rounded-sm" />
-              <button type="submit" className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Start or join table</button>
-            </form>
-          )}
-        </div>
-      </div>
+  const viewer = (seat !== null && seat !== undefined ? state.players.find((p) => p.id === seat) : null) || cur;
+  const myTurn = seat !== null && seat !== undefined && seat === me;
+  const close = () => setMenu(null);
 
-      <div className="px-4 py-2 border-b border-stone-400 flex flex-wrap items-center gap-x-4 gap-y-2 bg-white/40">
-        <span className="text-xs uppercase tracking-widest text-stone-600">Round {state.turn.round} / {S.roundLimit}</span>
-        {over && <span className="px-2 py-0.5 text-xs font-bold bg-stone-800 text-stone-50 rounded-sm">GAME OVER</span>}
-        <span className="font-semibold text-sm">{cur?.name}</span>
-        <span className="flex items-center gap-1.5">
-          <span className="text-xs text-stone-600 mr-1">AP</span>
-          {Array.from({ length: S.apPerTurn }).map((_, i) => (
-            <button key={i} onClick={() => commit((s) => { s.turn.ap = i < state.turn.ap ? i : i + 1; })}
-              className="w-4 h-4 rounded-full border-2 border-stone-700"
-              style={{ background: i < state.turn.ap ? "#26261f" : "transparent" }} />
-          ))}
-        </span>
-        <button onClick={drawDiscs} className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60">Draw {S.drawCount}</button>
-        <button onClick={callDividends} disabled={S.strict && state.turn.usedSlot}
-                className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60 disabled:opacity-40">Call dividends</button>
-        <button onClick={endTurn} className="px-3 py-1 text-sm bg-stone-800 text-stone-50 rounded-sm">End turn</button>
-        <button onClick={undo} disabled={!T.canUndo} title="Takes back your own last move"
-                className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60 disabled:opacity-40">↶ Undo my move</button>
-        <button onClick={() => setShowTally((x) => !x)} className={`px-2.5 py-1 text-sm rounded-sm border ${showTally || over ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-500 hover:bg-white/60"}`}>Tally</button>
-        <label className="flex items-center gap-1 text-[11px] text-stone-600">
-          <input type="checkbox" checked={!!S.strict} onChange={(e) => commit((s2) => { s2.settings.strict = e.target.checked; })} />
-          enforce rules
-        </label>
-        <span className="ml-auto text-xs text-stone-600 tabular-nums">
-          bag {state.bag.length} · on board {state.onboard.length} · destroyed {state.burned.length} · of {LINES.reduce((a, l) => a + l.discs, 0)}
-        </span>
+  const syncDot = !room ? null : diag.err ? ["#D93025", diag.err]
+    : backend === "local" ? ["#F2A900", "Multiplayer isn't set up on this site yet: this table is shared only between tabs in this browser."]
+    : diag.link === "live" ? ["#00933C", `Live · v${state.v}${diag.at ? " · synced " + diag.at : ""}`]
+    : ["#9A9A94", diag.link || "connecting"];
+
+  const topControls = (
+    <div className="flex items-center gap-2 text-[13px] min-w-0">
+      {room ? (
+        <>
+          <span className="hidden sm:flex items-center gap-1.5 text-white/70 min-w-0" title={syncDot[1]}>
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: syncDot[0] }} />
+            <span className="truncate">Table <b className="text-white">{room}</b></span>
+            {diag.pending > 0 && <span className="text-white/50">saving…</span>}
+          </span>
+          <span className="sm:hidden w-2.5 h-2.5 rounded-full shrink-0" style={{ background: syncDot[0] }} title={syncDot[1]} />
+          <button onClick={() => setMenu(menu === "seat" ? null : "seat")} className="nm-btn-dark truncate max-w-[40vw]">
+            {seat === undefined ? "Pick your seat" : seat === null ? "Everyone here" : `You: ${viewer?.name}`} ▾
+          </button>
+          <button onClick={() => { const u = shareLink(room); navigator.clipboard?.writeText(u).then(() => setStatus("Invite link copied. Send it to the other players."), () => window.prompt("Copy this link:", u)); }}
+                  className="nm-btn-light">Invite</button>
+        </>
+      ) : (
+        <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); const c = cleanCode(roomInput); if (c) join(c); }}>
+          <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="Table code"
+                 className="w-28 sm:w-36 h-8 rounded-md bg-white/10 border border-white/20 px-2.5 text-white placeholder-white/40 focus:outline-none focus:border-white/60" />
+          <button type="submit" className="nm-btn-light">Play online</button>
+        </form>
+      )}
+      <button onClick={() => setMenu(menu === "table" ? null : "table")} className="nm-btn-dark px-2.5" aria-label="Table menu">⋯</button>
+    </div>
+  );
+
+  const Menu = ({ children }) => (
+    <>
+      <div className="fixed inset-0 z-40" onClick={close} />
+      <div className="fixed right-2 top-12 z-50 w-72 max-w-[calc(100vw-16px)] bg-white rounded-xl shadow-xl border border-[#E2E1DB] py-1.5 text-[14px]">{children}</div>
+    </>
+  );
+  const Item = ({ onClick, children, sub }) => (
+    <button onClick={() => { close(); onClick(); }} className="w-full text-left px-4 py-2 hover:bg-[#F2F1EC]">
+      <div>{children}</div>{sub && <div className="text-[12px] text-[#6B6B66]">{sub}</div>}
+    </button>
+  );
+  const Check = ({ checked, onChange, children }) => (
+    <label className="flex items-center justify-between px-4 py-2 hover:bg-[#F2F1EC] cursor-pointer">
+      <span>{children}</span><input type="checkbox" className="w-4 h-4 accent-black" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+  const Sheet = ({ title, onClose, children, wide }) => (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-6" onClick={onClose}>
+      <div className={`bg-white w-full ${wide ? "sm:max-w-4xl" : "sm:max-w-lg"} max-h-[90vh] overflow-auto rounded-t-2xl sm:rounded-2xl shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white flex items-center justify-between px-5 py-3.5 border-b border-[#E2E1DB]">
+          <h2 className="text-[17px] font-bold">{title}</h2>
+          {onClose && <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-[#F2F1EC] text-xl leading-none" aria-label="Close">×</button>}
+        </div>
+        <div className="p-5">{children}</div>
       </div>
+    </div>
+  );
+
+  const tallyRows = state.players.map((p) => {
+    const shares = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0);
+    return { p, cash: p.cash || 0, shares, total: (p.cash || 0) + shares };
+  }).sort((x, y) => y.total - x.total);
+
+  const btn = "h-10 px-4 rounded-lg border border-[#CFCEC7] bg-white font-semibold text-[14px] hover:bg-[#F2F1EC] disabled:opacity-40 disabled:hover:bg-white";
+  const seg = (on) => `h-8 px-3 text-[13px] font-semibold ${on ? "bg-[#111] text-white" : "bg-white text-[#111] hover:bg-[#F2F1EC]"}`;
+  const hand = viewer?.hand || [];
+  const handBy = LINES.map((l) => ({ l, n: hand.filter((d) => d === l.id).length }));
+
+  return (
+    <div className="flex-1 min-h-0 flex-col lg:flex-row text-[#111] bg-[#F2F1EC]" style={{ display: hidden ? "none" : "flex" }}>
+      {slot && !hidden && createPortal(topControls, slot)}
+
+      {menu === "seat" && (
+        <Menu>
+          <div className="px-4 pt-1.5 pb-1 text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">Which player are you?</div>
+          {state.players.map((p) => (
+            <Item key={p.id} onClick={() => setSeat(p.id)}>{seat === p.id ? "✓ " : ""}{p.name}</Item>
+          ))}
+          <Item onClick={() => setSeat(null)} sub="Pass-and-play on one device">{seat === null ? "✓ " : ""}Everyone at this screen</Item>
+        </Menu>
+      )}
+      {menu === "table" && (
+        <Menu>
+          <Item onClick={() => setShowTally(true)} sub="Cash plus shares at today's price">Tally</Item>
+          <Item onClick={() => setShowTune(true)}>Tuning</Item>
+          <Item onClick={() => { const t = tab === "map" ? "play" : "map"; setTab(t); setPending(null); setMode(t === "play" ? "track" : "terrain"); }}>
+            {tab === "map" ? "Back to play" : "Edit map"}</Item>
+          <Check checked={showZones} onChange={setShowZones}>Show zones</Check>
+          <Check checked={!!S.strict} onChange={(v) => commit((s2) => { s2.settings.strict = v; }, v ? "turned rules on" : "turned rules off")}>Enforce rules</Check>
+          <Check checked={!!S.autoAP} onChange={(v) => commit((s2) => { s2.settings.autoAP = v; })}>Spend action points automatically</Check>
+          <div className="my-1.5 border-t border-[#E2E1DB]" />
+          <Item onClick={() => { if (!confirm(room ? `Start a new game at table "${room}"? This resets the board for everyone.` : "Start a new game?")) return;
+                                 commit(() => { const f = makeV2(S); f.settings = { ...S }; f.players = f.players.map((p, i) => state.players[i] ? { ...p, name: state.players[i].name } : p); return f; }, "started a new game"); }}>
+            New game</Item>
+          {room && <Item onClick={() => { if (confirm("Leave this table? You can rejoin with the same code.")) join(""); }}>Leave table</Item>}
+          {room && backend === "local" && <div className="px-4 py-2 text-[12px] text-[#8A5A00] bg-[#FFF6DB] mx-2 mt-1 rounded-md">{syncDot[1]}</div>}
+        </Menu>
+      )}
+
+      {room && T.loaded && seat === undefined && (
+        <Sheet title="Which player are you?">
+          <p className="text-[14px] text-[#6B6B66] mb-4">Your moves are logged under this name. You can change it any time from the top bar.</p>
+          <div className="grid grid-cols-2 gap-2">
+            {state.players.map((p) => <button key={p.id} onClick={() => setSeat(p.id)} className={btn + " h-12 text-[15px]"}>{p.name}</button>)}
+          </div>
+          <button onClick={() => setSeat(null)} className="mt-3 w-full text-[14px] text-[#6B6B66] underline">Everyone at this screen (pass-and-play)</button>
+        </Sheet>
+      )}
+
+      {(showTally || (over && !tallySeen)) && (
+        <Sheet title={over ? "Final tally" : "Tally if the game ended now"} onClose={() => { setShowTally(false); setTallySeen(true); }}>
+          <table className="w-full text-[15px] tabular-nums">
+            <thead><tr className="text-[12px] uppercase tracking-wide text-[#6B6B66] border-b border-[#E2E1DB]">
+              <th className="text-left py-2 w-8"></th><th className="text-left py-2">Investor</th><th className="text-right py-2">Cash</th><th className="text-right py-2">Shares</th><th className="text-right py-2">Total</th></tr></thead>
+            <tbody>
+              {tallyRows.map((r, i) => (
+                <tr key={r.p.id} className={`border-b border-[#EEEDE8] ${i === 0 ? "font-bold" : ""}`}>
+                  <td className="py-2.5 text-[#6B6B66]">{i + 1}</td><td>{r.p.name}</td>
+                  <td className="text-right">${r.cash}</td><td className="text-right">${r.shares}</td><td className="text-right">${r.total}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[12px] text-[#6B6B66] mt-3">Shares are valued at today&rsquo;s price. Merger bonuses are not included.</p>
+        </Sheet>
+      )}
 
       {showTune && (
-        <div className="px-4 py-3 border-b border-stone-400 bg-white/60">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-0.5 max-w-6xl">
+        <Sheet title="Tuning" onClose={() => setShowTune(false)} wide>
+          <div className="tune grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8">
             {N("Action points / turn", "apPerTurn")}
             {N("Rounds in the game", "roundLimit")}
             {N("Hand limit", "handLimit")}
@@ -408,386 +500,376 @@ export default function GameInfluence({ hidden }) {
             {N("$ per station", "perStation")}
             {N("$ per zone", "perZone")}
             {N("Discs to resist a merge", "mergeResist")}
-            <label className="flex items-center justify-between gap-2 py-0.5">
-              <span className="text-xs text-stone-600">Enforce the rules</span>
-              <input type="checkbox" checked={!!S.strict} onChange={(e) => commit((s2) => { s2.settings.strict = e.target.checked; })} />
-            </label>
-            <label className="flex items-center justify-between gap-2 py-0.5">
-              <span className="text-xs text-stone-600">Spend action points automatically</span>
-              <input type="checkbox" checked={!!S.autoAP} onChange={(e) => commit((s2) => { s2.settings.autoAP = e.target.checked; })} />
-            </label>
           </div>
-          <p className="text-[11px] text-stone-500 mt-2 max-w-4xl">
+          <p className="text-[13px] text-[#6B6B66] mt-4">
             Simulation found: separation peaks around round 14, so 15 is the sweet spot. Station base 3 with round-up
             destruction drains the bag but clusters stations; base 5 spreads them but barely burns discs. Crossing at a
-            cost keeps lines unstuck where "only at a station" walls in 3–4 of the 7.
+            cost keeps lines unstuck where &ldquo;only at a station&rdquo; walls in 3–4 of the 7.
           </p>
-        </div>
+        </Sheet>
       )}
 
-      {showTally || over ? (() => {
-        const rows = state.players.map((p) => {
-          const shares = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0);
-          return { p, cash: p.cash || 0, shares, total: (p.cash || 0) + shares };
-        }).sort((x, y) => y.total - x.total);
-        return (
-          <div className="px-4 py-3 border-b border-stone-400 bg-white/70">
-            <div className="flex items-baseline gap-3 mb-1.5">
-              <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-sm font-bold">{over ? "Final tally" : "Tally if the game ended now"}</h2>
-              <span className="text-[11px] text-stone-500">cash + every share at today&rsquo;s price. Merger bonuses are not included.</span>
-              {!over && <button onClick={() => setShowTally(false)} className="ml-auto text-xs underline">close</button>}
+      {status && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-5 z-50 bg-[#111] text-white text-[14px] px-4 py-2.5 rounded-lg shadow-lg max-w-[90vw]">{status}</div>
+      )}
+
+      {/* ── board ─────────────────────────────────────────── */}
+      <main className="flex-1 min-w-0 flex flex-col gap-2.5 p-2.5 sm:p-3 lg:h-[calc(100vh-48px)]">
+        <div className="flex flex-wrap items-center gap-2">
+          {tab === "play" ? (
+            <div className="flex rounded-lg overflow-hidden border border-[#111]">
+              {[["track", "Lay track"], ["station", "Build station"]].map(([m, l]) => (
+                <button key={m} onClick={() => { setMode(m); setPending(null); }} className={seg(mode === m) + " h-9 px-3.5"}>{l}</button>
+              ))}
             </div>
-            <table className="text-sm tabular-nums">
-              <thead><tr className="text-[11px] uppercase tracking-wide text-stone-500"><th className="text-left pr-6 font-medium"></th><th className="text-left pr-6 font-medium">Investor</th><th className="text-right pr-6 font-medium">Cash</th><th className="text-right pr-6 font-medium">Shares</th><th className="text-right font-medium">Total</th></tr></thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={r.p.id} className={i === 0 ? "font-bold" : ""}>
-                    <td className="pr-6 text-stone-500">{i + 1}</td>
-                    <td className="pr-6">{r.p.name}</td>
-                    <td className="pr-6 text-right">${r.cash}</td>
-                    <td className="pr-6 text-right">${r.shares}</td>
-                    <td className="text-right">${r.total}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })() : null}
-
-      {/* sync status — the first thing to check when playing with someone else */}
-      {(() => {
-        const bad = !!diag.err;
-        const live = diag.link === "live";
-        return (
-          <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]"
-               style={{ background: !room ? "#EDEDE2" : bad ? "#FBE3E0" : backend === "local" ? "#FBF1D9" : "#E4F0E4" }}>
-            <span className="font-semibold uppercase tracking-wide text-stone-600">Sync</span>
-            {!room ? <span className="text-stone-600">Playing on this screen only. Start or join a table to play with others — everyone uses the same code, or the invite link.</span> : (
-              <>
-                {backend === "local"
-                  ? <span className="text-amber-900 font-semibold">Multiplayer isn&rsquo;t set up on this site yet — this table is shared only between tabs in this browser.</span>
-                  : <span className={live ? "text-emerald-800 font-semibold" : "text-stone-700"}>{live ? "● live" : diag.link || "connecting"}</span>}
-                <span className="tabular-nums text-stone-600">v{state.v}</span>
-                {diag.pending > 0 && <span className="text-stone-700">saving…</span>}
-                {diag.conflicts > 0 && <span className="text-stone-500" title="Times two players moved at once; both moves were kept">{diag.conflicts} simultaneous move{diag.conflicts > 1 ? "s" : ""} merged</span>}
-                {diag.note && <span className="text-amber-900">{diag.note}</span>}
-                {bad && <span className="text-red-800 font-semibold">{diag.err}</span>}
-                {diag.at && <span className="ml-auto text-stone-500">last synced {diag.at}</span>}
-              </>
-            )}
-          </div>
-        );
-      })()}
-
-      {room && T.loaded && seat === undefined ? (
-        <div className="px-4 py-3 border-b-2 border-stone-800 bg-amber-50 flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-semibold">Which player are you?</span>
-          {state.players.map((p) => (
-            <button key={p.id} onClick={() => setSeat(p.id)} className="px-3 py-1 rounded-sm border-2 border-stone-800 bg-white hover:bg-stone-800 hover:text-stone-50">{p.name}</button>
-          ))}
-          <button onClick={() => setSeat(null)} className="px-3 py-1 rounded-sm border border-stone-400">Everyone at this screen</button>
-          <span className="text-[11px] text-stone-500 basis-full">Rename players in the Investors panel first if you like. Your choice is remembered for this table.</span>
-        </div>
-      ) : (
-        <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] bg-white/50">
-          <span className="font-semibold uppercase tracking-wide text-stone-600">You are</span>
-          <span className="flex flex-wrap gap-1">
-            {state.players.map((p) => (
-              <button key={p.id} onClick={() => setSeat(p.id)}
-                className={`px-2 py-0.5 rounded-sm border ${seat === p.id ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400 hover:bg-white"}`}>
-                {p.name}
-              </button>
-            ))}
-            <button onClick={() => setSeat(null)} className={`px-2 py-0.5 rounded-sm border ${seat === null || seat === undefined ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>everyone here</button>
-          </span>
-          {seat !== null && seat !== undefined && (seat === me
-            ? <span className="px-2 py-0.5 rounded-sm bg-emerald-100 text-emerald-900 font-semibold">Your turn</span>
-            : <span className="px-2 py-0.5 rounded-sm bg-amber-100 text-amber-900 font-semibold">It is {cur?.name}&rsquo;s turn — your clicks will move their pieces</span>)}
-          {status && <span className="ml-auto text-stone-700">{status}</span>}
-        </div>
-      )}
-
-      {room && (state.log || []).length > 0 && (
-        <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs bg-white/30">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">Latest</span>
-          {(state.log || []).slice(0, 3).map((l, i) => (
-            <span key={i} className={i < changed.log ? "text-stone-900" : "text-stone-500"}>
-              {i < changed.log && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-600 mr-1 align-middle" />}
-              <b className="font-semibold">{l.who}</b> {l.note} <span className="text-stone-400">{ago(l.t)}</span>
-            </span>
-          ))}
-          {changed.hexes.size > 0 && (
-            <span className="ml-auto flex items-center gap-2">
-              <span className="text-amber-900">Changes since your last move are outlined on the board</span>
-              <button onClick={T.clearSince} className="underline text-stone-600">clear</button>
-            </span>
+          ) : (
+            <>
+              <span className="text-[13px] font-bold mr-1">Editing map</span>
+              {Object.entries(TERRAIN).map(([k, t]) => (
+                <button key={k} onClick={() => setPaint(k)} className={`h-8 px-3 text-[13px] rounded-lg border-2 ${paint === k ? "border-[#111]" : "border-transparent"}`} style={{ background: t.fill }}>{t.label}</button>
+              ))}
+              <button onClick={() => { setTab("play"); setMode("track"); }} className="h-8 px-3 text-[13px] underline">Done</button>
+            </>
+          )}
+          {tab === "play" && (
+            <div className="flex flex-wrap items-center gap-1">
+              {LINES.map((l) => {
+                const n = handCount(cur, l.id), on = activeLine === l.id;
+                return (
+                  <button key={l.id} onClick={() => setActiveLine(l.id)} title={`${l.name} — ${cur?.name} holds ${n}`}
+                          className={`h-9 pl-1 pr-2.5 rounded-full flex items-center gap-1.5 text-[13px] font-semibold border-2 ${on ? "border-[#111] bg-white" : "border-transparent hover:bg-white/70"}`}>
+                    <Bullet lid={l.id} size={26} dim={!n} />
+                    <span className={`hidden xl:inline ${n ? "" : "text-[#9A9A94]"}`}>{l.name}</span>
+                    <span className="tabular-nums text-[#6B6B66]">{n}</span>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
-      )}
 
-      <div className="flex flex-col lg:flex-row">
-        <div className="flex-1 min-w-0 p-3">
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            {(tab === "play" ? [["track", "Lay track"], ["station", "Build station"]] : [["terrain", "Paint terrain"]]).map(([m, l]) => (
-              <button key={m} onClick={() => { setMode(m); setPending(null); }}
-                className={`px-3 py-1.5 text-sm rounded-sm border ${mode === m ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400 hover:bg-white/60"}`}>{l}</button>
-            ))}
-            {tab === "map" && mode === "terrain" && Object.entries(TERRAIN).map(([k, t]) => (
-              <button key={k} onClick={() => setPaint(k)} className={`px-2.5 py-1 text-xs rounded-sm border-2 ${paint === k ? "border-stone-900" : "border-stone-300"}`} style={{ background: t.fill }}>{t.label}</button>
-            ))}
-            <span className="mx-1 h-5 w-px bg-stone-400" />
-            {LINES.map((l) => (
-              <button key={l.id} onClick={() => setActiveLine(l.id)}
-                className={`px-2 py-1 text-xs font-semibold rounded-sm border-2 flex items-center gap-1 ${activeLine === l.id ? "border-stone-900" : "border-transparent"}`}
-                style={{ background: l.color, color: "#fff", opacity: handCount(cur, l.id) ? 1 : 0.45 }}>
-                {l.name}<span className="tabular-nums opacity-80">{handCount(cur, l.id)}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="relative">
-          <div className="absolute right-2 top-2 z-10 flex rounded-sm overflow-hidden border border-stone-500 bg-white/90 text-xs shadow-sm">
-            {[[1, "Fit"], [1.6, "Zoom"], [2.4, "Zoom ×2"]].map(([z, l]) => (
-              <button key={z} onClick={() => setZoom(z)} className={`px-2 py-1 ${zoom === z ? "bg-stone-800 text-stone-50" : ""}`}>{l}</button>
-            ))}
-          </div>
-          <div className="bg-white/40 border border-stone-400 rounded-sm overflow-auto max-h-[78vh] lg:max-h-[70vh]">
-            <svg viewBox={`${view.x0} ${view.y0} ${view.w} ${view.h}`} style={{ width: `${zoom * 100}%`, display: "block" }}>
-              {cells.map(({ c, r, id }) => {
-                const k = map.hexes[id]; if (!k && tab !== "map") return null;
-                const x = cx(c, r), y = cy(c, r), z = ZONE_OF[id];
-                const fill = !k ? "#00000008" : (showZones && z !== undefined && k !== "w") ? ZONE_COLORS[z] : TERRAIN[k].fill;
-                return (
-                  <g key={id} onClick={() => onHex(id, !!k)} className="cursor-pointer">
-                    <polygon points={hexPath(x, y)} fill={fill} stroke={k ? "#4a4a44" : "#00000022"} strokeWidth={k ? 0.8 : 0.6} strokeDasharray={k ? "" : "3 3"} />
-                    {crossHexes.has(id) && <polygon points={hexPath(x, y)} fill="#B4530933" stroke="#B45309" strokeWidth="1.5" />}
-                    {tab === "play" && netHexes.has(id) && <polygon points={hexPath(x, y)} fill="none" stroke={colorOf(activeLine)} strokeWidth="2" opacity="0.5" />}
-                    {sel === id && <polygon points={hexPath(x, y)} fill="none" stroke="#B45309" strokeWidth="3" />}
-                    {pending === id && <polygon points={hexPath(x, y)} fill="none" stroke="#111" strokeWidth="3" />}
-                    {changed.hexes.has(id) && <polygon points={hexPath(x, y)} fill="#F59E0B22" stroke="#D97706" strokeWidth="3.5" strokeDasharray="7 4" pointerEvents="none" />}
-                    {map.names[id] && <text x={x} y={y + 19} textAnchor="middle" style={{ fontSize: 7, pointerEvents: "none" }} fill="#2b2b26">
-                      {map.names[id].length > 17 ? map.names[id].split(" ").slice(0, 2).join(" ") : map.names[id]}</text>}
-                  </g>
-                );
-              })}
-              {showZones && zoneBorders.map((e, i) => (
-                <g key={"zb" + i} pointerEvents="none">
-                  <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#ffffffaa" strokeWidth="7" strokeLinecap="round" />
-                  <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#5a5a4e" strokeWidth="4" strokeLinecap="round" />
+        <div className="relative flex-1 min-h-[60vh] lg:min-h-0">
+        <div className="absolute right-2 top-2 z-10 flex rounded-lg overflow-hidden border border-[#CFCEC7] shadow-sm">
+          {[[1, "Fit"], [1.6, "Zoom"], [2.4, "×2"]].map(([z, l]) => (
+            <button key={z} onClick={() => setZoom(z)} className={seg(zoom === z)}>{l}</button>
+          ))}
+        </div>
+        <div className="absolute inset-0 bg-white rounded-xl border border-[#E2E1DB] overflow-auto">
+          <svg viewBox={`${view.x0} ${view.y0} ${view.w} ${view.h}`} preserveAspectRatio="xMidYMid meet"
+               style={zoom === 1 ? { width: "100%", height: "100%", display: "block", position: "absolute", inset: 0 } : { width: `${zoom * 100}%`, display: "block" }}>
+            {cells.map(({ c, r, id }) => {
+              const k = map.hexes[id]; if (!k && tab !== "map") return null;
+              const x = cx(c, r), y = cy(c, r), z = ZONE_OF[id];
+              const fill = !k ? "#F6F5F0" : k === "w" ? "#D6EAF5" : k === "o" ? "#E7D2C6" : (showZones && z !== undefined) ? ZONE_COLORS[z] : "#ECEBE3";
+              return (
+                <g key={id} onClick={() => onHex(id, !!k)} className="cursor-pointer">
+                  <polygon points={hexPath(x, y)} fill={fill} stroke={k ? "#ffffff" : "#E2E1DB"} strokeWidth={k ? 2.5 : 1} strokeDasharray={k ? "" : "3 3"} />
+                  {crossHexes.has(id) && <polygon points={hexPath(x, y)} fill="#B4530922" stroke="none" />}
+                  {tab === "play" && netHexes.has(id) && <polygon points={hexPath(x, y)} fill={colorOf(activeLine)} fillOpacity="0.10" stroke="none" />}
                 </g>
-              ))}
-              {/* legal next builds for the active line */}
-              {tab === "play" && mode === "track" && Object.entries(legal).map(([k, info]) => {
-                const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
-                const ok = canPay(info);
-                return <line key={"lg" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)}
-                             stroke={colorOf(activeLine)} strokeWidth="3" strokeDasharray="4 4"
-                             opacity={ok ? 0.55 : 0.18} pointerEvents="none" />;
-              })}
-              {changed.edges.map(({ k, gone }) => {
-                const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
-                return <line key={"ch" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} pointerEvents="none"
-                             stroke={gone ? "#7c7c70" : "#F59E0B"} strokeWidth={gone ? 4 : 16} strokeDasharray={gone ? "3 5" : ""} strokeLinecap="round" opacity={gone ? 0.9 : 0.55} />;
-              })}
-              {Object.keys(state.track).map((k) => {
-                const lid = trackOwner(state, k);
-                const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
-                return (
-                  <g key={k} pointerEvents="none">
-                    <line x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} stroke="#fff" strokeWidth="8" strokeLinecap="round" />
-                    <line x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} stroke={colorOf(lid)} strokeWidth="5" strokeLinecap="round" />
-                  </g>
-                );
-              })}
-              {(map.nocross || []).map((k) => { const [a, b] = k.split("|"); const e = sharedEdge(a, b);
-                return <line key={"n" + k} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#1F5432" strokeWidth="6" strokeLinecap="round" pointerEvents="none" />; })}
-              {(map.rivers || []).map((k) => { const [a, b] = k.split("|"); const e = sharedEdge(a, b);
-                return <line key={"r" + k} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#2674BA" strokeWidth="6" strokeLinecap="round" pointerEvents="none" />; })}
-              {cells.map(({ c, r, id }) => {
-                if (!map.hexes[id]) return null;
-                const x = cx(c, r), y = cy(c, r), stn = state.stations[id];
-                return (
-                  <g key={"m" + id} onClick={() => onHex(id, true)} className="cursor-pointer">
-                    {map.names[id] && !stn && <circle cx={x} cy={y} r="6" fill="#111" />}
-                    {stn && <><circle cx={x} cy={y} r="11" fill="#fff" stroke={colorOf(stn.o)} strokeWidth="4" /><circle cx={x} cy={y} r="4" fill={colorOf(stn.o)} /></>}
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-          </div>
-
-          <div className="mt-2 border border-stone-400 rounded-sm bg-white/60 p-2.5">
-            <div className="flex items-baseline justify-between mb-1.5">
-              <span className="text-xs uppercase tracking-widest text-stone-600">
-                {(seat !== null ? state.players.find((p) => p.id === seat) : cur)?.name}&rsquo;s influence
-                <button onClick={() => setReveal((r) => !r)} className="ml-2 normal-case tracking-normal underline text-[11px]">{reveal ? "hide" : "show"}</button>
-              </span>
-              <span className="text-[11px] text-stone-500 tabular-nums">{(((seat !== null ? state.players.find((p) => p.id === seat) : cur)?.hand) || []).length} / {S.handLimit}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 mb-2 pb-2 border-b border-stone-300">
-              <span className="text-[10px] uppercase tracking-wide text-stone-500 mr-1">add / remove</span>
-              {LINES.map((l) => (
-                <span key={l.id} className="flex items-center rounded-sm" style={{ border: `1px solid ${l.color}` }}>
-                  <button onClick={() => commit((s2) => { const who = seat !== null ? seat : s2.turn.active;
-                            const q = s2.players.find((x) => x.id === who); const ix = q.hand.indexOf(l.id); if (ix >= 0) q.hand.splice(ix, 1); }, `removed a ${l.name} disc`)}
-                          className="px-1 text-[11px] leading-none">−</button>
-                  <span className="w-3 h-3 rounded-full" style={{ background: l.color }} />
-                  <button onClick={() => commit((s2) => { const who = seat !== null ? seat : s2.turn.active;
-                            const q = s2.players.find((x) => x.id === who); q.hand.push(l.id);
-                            const ix = s2.bag.indexOf(l.id); if (ix >= 0) s2.bag.splice(ix, 1); }, `added a ${l.name} disc`)}
-                          className="px-1 text-[11px] leading-none">+</button>
-                </span>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {!(((seat !== null ? state.players.find((p) => p.id === seat) : cur)?.hand) || []).length && <span className="text-xs text-stone-500">Empty — press Draw, or use + above.</span>}
-              {[...(((seat !== null ? state.players.find((p) => p.id === seat) : cur)?.hand) || [])].sort((a, b) => a - b).map((d, i) => (
-                <span key={i} title={lineOf(d)?.name} className="w-7 h-7 rounded-full border-2 border-white shadow-sm"
-                      style={{ background: reveal ? colorOf(d) : "#b8b8ac" }} />
-              ))}
-            </div>
-            {sel && (
-              <div className="mt-2 text-xs text-stone-700">
-                <b>{map.names[sel] || sel}</b> — nearest station {selCost?.d === null ? "none yet" : selCost?.d + " hex"};
-                a {lineOf(activeLine)?.name} station here costs <b className="tabular-nums">{selCost?.c} discs</b>
-                {" "}({burnCount(state, selCost?.c || 0)} destroyed, {(selCost?.c || 0) - burnCount(state, selCost?.c || 0)} back to the bag)
-              </div>
-            )}
-          </div>
+              );
+            })}
+            {showZones && zoneBorders.map((e, i) => (
+              <line key={"zb" + i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#55554E" strokeWidth="2.5" strokeLinecap="round" pointerEvents="none" />
+            ))}
+            {(map.rivers || []).map((k) => { const [a, b] = k.split("|"); const e = sharedEdge(a, b);
+              return <line key={"r" + k} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#2F7FC1" strokeWidth="6" strokeLinecap="round" pointerEvents="none" />; })}
+            {(map.nocross || []).map((k) => { const [a, b] = k.split("|"); const e = sharedEdge(a, b);
+              return <line key={"n" + k} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="#2E7D46" strokeWidth="6" strokeLinecap="round" pointerEvents="none" />; })}
+            {cells.map(({ c, r, id }) => {
+              if (!map.hexes[id]) return null;
+              const x = cx(c, r), y = cy(c, r);
+              const ring = sel === id ? "#111" : pending === id ? "#111" : changed.hexes.has(id) ? "#E58A00" : null;
+              if (!ring) return null;
+              return <polygon key={"o" + id} points={hexPath(x, y)} fill={changed.hexes.has(id) && sel !== id ? "#FFB0001F" : "none"} stroke={ring}
+                              strokeWidth={pending === id ? 4 : 3} strokeDasharray={pending === id || sel === id ? "" : "8 5"} pointerEvents="none" />;
+            })}
+            {tab === "play" && mode === "track" && Object.entries(legal).map(([k, info]) => {
+              const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
+              return <line key={"lg" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)}
+                           stroke={colorOf(activeLine)} strokeWidth="4" strokeDasharray="5 6" strokeLinecap="round"
+                           opacity={canPay(info) ? 0.6 : 0.2} pointerEvents="none" />;
+            })}
+            {changed.edges.map(({ k, gone }) => {
+              const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
+              return <line key={"ch" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} pointerEvents="none"
+                           stroke={gone ? "#8A8A82" : "#FFB000"} strokeWidth={gone ? 4 : 20} strokeDasharray={gone ? "3 6" : ""} strokeLinecap="round" opacity={gone ? 0.9 : 0.55} />;
+            })}
+            {Object.keys(state.track).map((k) => {
+              const lid = trackOwner(state, k);
+              const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
+              return (
+                <g key={k} pointerEvents="none">
+                  <line x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} stroke="#fff" strokeWidth="13" strokeLinecap="round" />
+                  <line x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} stroke={colorOf(lid)} strokeWidth="8" strokeLinecap="round" />
+                </g>
+              );
+            })}
+            {cells.map(({ c, r, id }) => {
+              if (!map.hexes[id]) return null;
+              const x = cx(c, r), y = cy(c, r), stn = state.stations[id], nm = map.names[id];
+              if (!stn && !nm) return null;
+              return (
+                <g key={"m" + id} onClick={() => onHex(id, true)} className="cursor-pointer">
+                  {nm && !stn && <circle cx={x} cy={y} r="6" fill="#111" stroke="#fff" strokeWidth="2.5" />}
+                  {stn && <>
+                    <circle cx={x} cy={y} r="13" fill="#fff" stroke="#111" strokeWidth="3" />
+                    <circle cx={x} cy={y} r="8" fill={colorOf(stn.o)} />
+                  </>}
+                </g>
+              );
+            })}
+            {cells.map(({ c, r, id }) => {
+              const nm = map.hexes[id] && map.names[id]; if (!nm) return null;
+              const x = cx(c, r), y = cy(c, r), words = nm.split(" ");
+              const half = Math.ceil(words.length / 2);
+              const lines = nm.length > 13 && words.length > 1 ? [words.slice(0, half).join(" "), words.slice(half).join(" ")] : [nm];
+              return (
+                <text key={"t" + id} x={x} y={y + 25} textAnchor="middle" pointerEvents="none"
+                      style={{ fontSize: 10.5, fontWeight: 700, paintOrder: "stroke", stroke: "#fff", strokeWidth: 3, strokeLinejoin: "round", letterSpacing: "-0.01em" }} fill="#1A1A18">
+                  {lines.map((t, i) => <tspan key={i} x={x} dy={i ? 11 : 0}>{t}</tspan>)}
+                </text>
+              );
+            })}
+          </svg>
+        </div>
         </div>
 
-        <div className="w-full lg:w-[390px] shrink-0 border-t-2 lg:border-t-0 lg:border-l-2 border-stone-800 p-4 space-y-5 text-sm">
-          <section>
-            <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">The seven lines</h2>
-            <div className="space-y-1">
-              {LINES.map((l) => {
-                const rc = reach[l.id];
-                const isAcq = acquirer?.id === l.id;
+        {sel && map.hexes[sel] && (
+          <div className="text-[13px] text-[#3A3A36] bg-white rounded-lg border border-[#E2E1DB] px-3 py-2 flex flex-wrap items-center gap-x-2">
+            <b>{map.names[sel] || "This hex"}</b>
+            <span>· nearest station {selCost?.d === null ? "none yet" : `${selCost?.d} hex${selCost?.d === 1 ? "" : "es"} away`}</span>
+            <span>· a {lineOf(activeLine)?.name} station here costs <b className="tabular-nums">{selCost?.c} discs</b>
+              {" "}({burnCount(state, selCost?.c || 0)} destroyed, {(selCost?.c || 0) - burnCount(state, selCost?.c || 0)} back to the bag)</span>
+            <button onClick={() => setSel(null)} className="ml-auto text-[#6B6B66] underline">clear</button>
+          </div>
+        )}
+      </main>
+
+      {/* ── turn panel + sidebar ──────────────────────────── */}
+      <aside className="w-full lg:w-[420px] shrink-0 bg-white border-t lg:border-t-0 lg:border-l border-[#E2E1DB] flex flex-col lg:h-[calc(100vh-48px)]">
+        <section className="p-4 border-b border-[#E2E1DB]">
+          <div className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">
+            Round {state.turn.round} of {S.roundLimit}
+            {over && <span className="px-1.5 py-0.5 rounded bg-[#111] text-white normal-case tracking-normal">Game over</span>}
+            {S.strict && <span className="px-1.5 py-0.5 rounded bg-[#E9F3EC] text-[#1E6B36] normal-case tracking-normal">Rules on</span>}
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            <h2 className="text-[22px] font-bold leading-tight truncate">{myTurn ? "Your turn" : `${cur?.name}'s turn`}</h2>
+            {seat !== null && seat !== undefined && !myTurn && <span className="text-[12px] px-2 py-0.5 rounded-full bg-[#FFF3D6] text-[#8A5A00] font-semibold shrink-0">you&rsquo;re {viewer?.name}</span>}
+            <span className="ml-auto flex items-center gap-1 shrink-0" title="Action points — click to adjust">
+              {Array.from({ length: S.apPerTurn }).map((_, i) => (
+                <button key={i} onClick={() => commit((s) => { s.turn.ap = i < state.turn.ap ? i : i + 1; })}
+                        className="w-4 h-4 rounded-full border-2 border-[#111]" style={{ background: i < state.turn.ap ? "#111" : "transparent" }} />
+              ))}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            <button onClick={drawDiscs} className={btn}>Draw {S.drawCount}</button>
+            <button onClick={callDividends} disabled={S.strict && state.turn.usedSlot} className={btn}>Dividends</button>
+            <button onClick={endTurn} className="h-10 rounded-lg bg-[#111] text-white font-semibold text-[14px] hover:bg-black">End turn</button>
+          </div>
+          <div className="flex items-center gap-3 mt-2 text-[13px]">
+            <button onClick={undo} disabled={!T.canUndo} className="text-[#3A3A36] underline disabled:no-underline disabled:text-[#B5B4AD]">↶ Undo my move</button>
+            <button onClick={() => setShowTally(true)} className="text-[#3A3A36] underline">Tally</button>
+            <span className="ml-auto text-[12px] text-[#6B6B66] tabular-nums" title="Discs in the bag · on the board · destroyed">
+              bag {state.bag.length} · board {state.onboard.length} · gone {state.burned.length}
+            </span>
+          </div>
+
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">
+                {viewer === cur ? `${cur?.name}'s hand` : "Your hand"} · {hand.length}/{S.handLimit}
+              </span>
+              <span className="flex gap-3 text-[12px]">
+                <button onClick={() => setAdjust((a) => !a)} className="underline text-[#6B6B66]">{adjust ? "done" : "adjust"}</button>
+                <button onClick={() => setReveal((r) => !r)} className="underline text-[#6B6B66]">{reveal ? "hide" : "show"}</button>
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {handBy.filter(({ n }) => n || adjust).map(({ l, n }) => (
+                <span key={l.id} className="flex items-center gap-1 rounded-full bg-[#F2F1EC] pl-0.5 pr-2 h-8">
+                  {reveal ? <Bullet lid={l.id} size={26} /> : <span className="w-[26px] h-[26px] rounded-full bg-[#CFCEC7]" />}
+                  {adjust && <button onClick={() => commit((s2) => { const q = s2.players.find((x) => x.id === viewer.id); const ix = q.hand.indexOf(l.id); if (ix >= 0) { q.hand.splice(ix, 1); s2.bag.push(l.id); } }, `returned a ${l.name} disc`)}
+                                     className="w-6 h-6 rounded-full hover:bg-white text-[16px] leading-none">−</button>}
+                  <span className="text-[14px] font-bold tabular-nums w-3 text-center">{reveal ? n : "?"}</span>
+                  {adjust && <button onClick={() => commit((s2) => { const q = s2.players.find((x) => x.id === viewer.id); q.hand.push(l.id); const ix = s2.bag.indexOf(l.id); if (ix >= 0) s2.bag.splice(ix, 1); }, `took a ${l.name} disc`)}
+                                     className="w-6 h-6 rounded-full hover:bg-white text-[16px] leading-none">+</button>}
+                </span>
+              ))}
+              {!hand.length && !adjust && <span className="text-[13px] text-[#6B6B66]">Empty. Press Draw, or adjust.</span>}
+            </div>
+          </div>
+
+          {room && (state.log || []).length > 0 && (
+            <div className="mt-4 text-[13px] space-y-1">
+              {(state.log || []).slice(0, 3).map((l, i) => (
+                <div key={i} className={`flex gap-1.5 ${i < changed.log ? "" : "text-[#6B6B66]"}`}>
+                  <span className={`mt-[7px] w-1.5 h-1.5 rounded-full shrink-0 ${i < changed.log ? "bg-[#E58A00]" : "bg-transparent"}`} />
+                  <span className="min-w-0"><b>{l.who}</b> {l.note} <span className="text-[#9A9A94]">{ago(l.t)}</span></span>
+                </div>
+              ))}
+              {changed.hexes.size > 0 && (
+                <div className="text-[12px] text-[#8A5A00]">Changes since your last move are outlined in amber. <button onClick={T.clearSince} className="underline">Clear</button></div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <nav className="flex border-b border-[#E2E1DB] px-2 shrink-0">
+          {[["lines", "Lines"], ["investors", "Investors"], ["zones", "Zones"], ["log", "Log"]].map(([k, l]) => (
+            <button key={k} onClick={() => setSide(k)}
+                    className={`px-3 py-2.5 text-[14px] font-semibold border-b-[3px] -mb-px ${side === k ? "border-[#111] text-[#111]" : "border-transparent text-[#6B6B66] hover:text-[#111]"}`}>
+              {l}{k === "log" && changed.log > 0 && <span className="ml-1 inline-block min-w-[18px] px-1 rounded-full bg-[#E58A00] text-white text-[11px]">{changed.log}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="flex-1 min-h-0 overflow-auto p-4">
+          {side === "lines" && (
+            <>
+              <table className="w-full text-[13px] tabular-nums">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-[#6B6B66]">
+                    <th className="text-left font-semibold pb-2">Line</th>
+                    <th className="text-right font-semibold pb-2" title="Stations">Stn</th>
+                    <th className="text-right font-semibold pb-2" title="Zones reached">Zn</th>
+                    <th className="text-right font-semibold pb-2" title="Dividend per share">Div</th>
+                    <th className="text-right font-semibold pb-2" title="Shares left">Left</th>
+                    <th className="text-right font-semibold pb-2 pr-1">Buy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {LINES.map((l) => {
+                    const rc = reach[l.id], isAcq = acquirer?.id === l.id;
+                    const noBuy = S.strict && (handCount(cur, l.id) < 1 || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn);
+                    const noWild = S.strict && ((cur?.hand || []).length < S.wildCost || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn);
+                    return (
+                      <tr key={l.id} className="border-t border-[#EEEDE8]">
+                        <td className="py-2">
+                          <span className="flex items-center gap-2">
+                            <Bullet lid={l.id} size={24} />
+                            <span className="font-semibold">{l.name}</span>
+                            {isAcq && rc.stations > 0 && <span className="text-[10px] px-1.5 rounded bg-[#111] text-white font-semibold" title="Most stations — acquires in a merge">ACQ</span>}
+                          </span>
+                        </td>
+                        <td className="text-right">{rc.stations}</td>
+                        <td className="text-right">{rc.zones.length}</td>
+                        <td className="text-right font-bold">${rc.per}</td>
+                        <td className="text-right text-[#6B6B66]">{rc.left}</td>
+                        <td className="text-right pl-2">
+                          <span className="inline-flex gap-1">
+                            <button disabled={noBuy} onClick={() => invest(l.id, false)} title={`1 ${l.name} disc + $${rc.price}`}
+                                    className="h-8 min-w-[46px] px-2 rounded-md border border-[#CFCEC7] font-semibold hover:bg-[#F2F1EC] disabled:opacity-30">${rc.price}</button>
+                            <button disabled={noWild} onClick={() => invest(l.id, true)} title={`${S.wildCost} discs of any colour + $${rc.price}`}
+                                    className="h-8 px-2 rounded-md border border-[#CFCEC7] text-[12px] hover:bg-[#F2F1EC] disabled:opacity-30">Wild</button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="text-[12px] text-[#6B6B66] mt-2">
+                Stn stations · Zn zones reached · Div dividend per share · Left shares unsold. The price button buys with one disc of that line; Wild uses {S.wildCost} of any colour.
+                Invests this turn: {state.turn.invests}/{S.investPerTurn}.
+              </p>
+
+              <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66] mt-6 mb-2">Merge</h3>
+              <p className="text-[13px] text-[#6B6B66] mb-2">
+                Moves all track, stations and shares from one line to another. Payouts are not automated.
+                {acquirer?.n ? <> Acquirer now: <b className="text-[#111]">{lineOf(acquirer.id)?.name}</b> ({acquirer.n} stations).</> : null}
+              </p>
+              <div className="flex items-center gap-2 text-[13px]">
+                <select value={mergeFrom} onChange={(e) => setMergeFrom(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
+                  {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+                <span className="text-[#6B6B66]">into</span>
+                <select value={mergeTo} onChange={(e) => setMergeTo(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
+                  {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+                <button onClick={() => { if (confirm(`Merge ${lineOf(mergeFrom)?.name} into ${lineOf(mergeTo)?.name}?`)) doMerge(); }}
+                        className="h-9 px-3 rounded-md bg-[#111] text-white font-semibold">Merge</button>
+              </div>
+            </>
+          )}
+
+          {side === "investors" && (
+            <div className="space-y-3">
+              {state.players.map((p, idx) => {
+                const div = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.per || 0), 0);
+                const port = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0);
                 return (
-                  <div key={l.id} className={`flex items-center gap-1.5 text-xs border rounded-sm px-1.5 py-1 ${isAcq ? "border-stone-800 bg-white/70" : "border-stone-300 bg-white/50"}`}>
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ background: l.color }} />
-                    <span className="w-16 truncate font-medium">{l.name}</span>
-                    <span className="tabular-nums text-stone-600" title="stations">{rc.stations}s</span>
-                    <span className="tabular-nums text-stone-600" title="zones">{rc.zones.length}z</span>
-                    <span className="tabular-nums text-stone-600" title="links">{rc.links}L</span>
-                    <span className="tabular-nums font-semibold" title="dividend per share">${rc.per}</span>
-                    <span className="tabular-nums text-stone-500" title="shares left">{rc.left}</span>
-                    <span className="ml-auto flex gap-1">
-                      <button disabled={S.strict && (handCount(cur, l.id) < 1 || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn)}
-                              onClick={() => invest(l.id, false)} title={`1 ${l.name} disc + $${rc.price}`}
-                              className="px-1.5 py-0.5 border border-stone-400 rounded-sm disabled:opacity-30">${rc.price}</button>
-                      <button disabled={S.strict && ((cur?.hand || []).length < S.wildCost || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn)}
-                              onClick={() => invest(l.id, true)} title={`${S.wildCost} discs of any colour + $${rc.price}`}
-                              className="px-1.5 py-0.5 border border-stone-400 rounded-sm disabled:opacity-30">wild</button>
-                    </span>
+                  <div key={p.id} className={`rounded-xl border p-3 ${p.id === me ? "border-[#111] border-2" : "border-[#E2E1DB]"}`}>
+                    <div className="flex items-center gap-2">
+                      <input value={p.name} onChange={(e) => edit((s) => { s.players[idx].name = e.target.value; })}
+                             className="flex-1 min-w-0 font-bold text-[16px] bg-transparent focus:outline-none focus:bg-[#F2F1EC] rounded px-1 -mx-1" />
+                      {seat === p.id && <span className="text-[11px] px-1.5 py-0.5 rounded bg-[#F2F1EC] font-semibold">you</span>}
+                      <span className="flex items-center text-[16px] font-bold tabular-nums">
+                        $<input type="number" step={10} value={p.cash} onChange={(e) => edit((s2) => { s2.players[idx].cash = Number(e.target.value) || 0; })}
+                                className="w-16 bg-transparent text-right focus:outline-none focus:bg-[#F2F1EC] rounded" />
+                      </span>
+                      {p.id === me
+                        ? <span className="text-[11px] px-2 py-1 rounded-md bg-[#111] text-white font-semibold">Active</span>
+                        : <button onClick={() => commit((s) => { s.turn.active = p.id; }, `made ${p.name} active`)} className="text-[11px] px-2 py-1 rounded-md border border-[#CFCEC7] font-semibold hover:bg-[#F2F1EC]">Make active</button>}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      {LINES.map((l) => {
+                        const n = (p.shares || {})[l.id] || 0;
+                        return (
+                          <span key={l.id} className={`flex items-center rounded-full h-8 pl-0.5 pr-0.5 ${n ? "bg-[#F2F1EC]" : "bg-[#F8F8F5] opacity-60 hover:opacity-100"}`}>
+                            <Bullet lid={l.id} size={24} />
+                            <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = Math.max(0, (q.shares[l.id] || 0) - 1); s.sold[l.id] = Math.max(0, (s.sold[l.id] || 0) - 1); }, `took a ${l.name} share from ${p.name}`)}
+                                    className="w-6 h-7 text-[16px] leading-none hover:bg-white rounded-full">−</button>
+                            <span className="text-[13px] font-bold tabular-nums w-3 text-center">{n}</span>
+                            <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = (q.shares[l.id] || 0) + 1; s.sold[l.id] = (s.sold[l.id] || 0) + 1; }, `gave ${p.name} a ${l.name} share`)}
+                                    className="w-6 h-7 text-[16px] leading-none hover:bg-white rounded-full">+</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 text-[12px] text-[#6B6B66] tabular-nums">
+                      {(p.hand || []).length} discs · dividends ${div} · shares worth ${port} · <b className="text-[#111]">total ${(p.cash || 0) + port}</b>
+                    </div>
                   </div>
                 );
               })}
-            </div>
-            <p className="text-[11px] text-stone-500 mt-1.5">
-              s = stations · z = zones · L = links · then dividend per share, shares left, and price.
-              Bordered row is the current <b>acquirer</b> — most stations. Invests {state.turn.invests}/{S.investPerTurn} this turn.
-            </p>
-          </section>
-
-          <section>
-            <div className="flex items-baseline justify-between mb-2">
-              <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest text-stone-600">Investors</h2>
               <button onClick={() => commit((s) => { const ids = s.players.map((p) => p.id); let i = 0; while (ids.includes(i)) i++;
                         const q = v2Player(i, s.settings); for (let n = 0; n < s.settings.startingHand && s.bag.length; n++) q.hand.push(s.bag.pop()); s.players.push(q); }, "added an investor")}
-                      className="text-xs underline">add</button>
+                      className={btn + " w-full"}>+ Add investor</button>
             </div>
-            <div className="space-y-2">
-              {state.players.map((p, idx) => (
-                <div key={p.id} className={`border rounded-sm p-2 ${p.id === me ? "border-stone-800 bg-white/70" : "border-stone-400 bg-white/40"}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <input value={p.name} onBlur={syncNow} onChange={(e) => edit((s) => { s.players[idx].name = e.target.value; })}
-                           className="flex-1 min-w-0 font-semibold bg-transparent border-b border-stone-300 focus:outline-none text-sm" />
-                    <span className="flex items-center gap-0.5">
-                      <span className="text-stone-500">$</span>
-                      <input type="number" step={10} value={p.cash} onBlur={syncNow}
-                             onChange={(e) => edit((s2) => { s2.players[idx].cash = Number(e.target.value) || 0; })}
-                             className="w-16 bg-transparent border-b border-stone-300 text-right tabular-nums font-semibold focus:outline-none text-sm" />
-                    </span>
-                    <button onClick={() => commit((s) => { s.turn.active = p.id; }, `made ${p.name} active`)}
-                            className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${p.id === me ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>
-                      {p.id === me ? "active" : "make active"}</button>
-                  </div>
-                  <div className="flex flex-wrap gap-1 items-center">
-                    {LINES.map((l) => {
-                      const n = (p.shares || {})[l.id] || 0;
-                      return (
-                        <span key={l.id} className={`flex items-center gap-0.5 rounded-sm px-1 ${n ? "" : "opacity-35"}`} style={{ border: `1px solid ${l.color}` }}>
-                          <span className="w-2 h-2 rounded-full" style={{ background: l.color }} />
-                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = Math.max(0, (q.shares[l.id] || 0) - 1); s.sold[l.id] = Math.max(0, (s.sold[l.id] || 0) - 1); }, `took a ${l.name} share from ${p.name}`)} className="px-0.5 text-[11px] leading-none">−</button>
-                          <span className="text-[11px] font-semibold tabular-nums w-3 text-center">{n}</span>
-                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = (q.shares[l.id] || 0) + 1; s.sold[l.id] = (s.sold[l.id] || 0) + 1; }, `gave ${p.name} a ${l.name} share`)} className="px-0.5 text-[11px] leading-none">+</button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-1 text-[11px] text-stone-600 tabular-nums">
-                    {(p.hand || []).length} discs · dividends ${Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.per || 0), 0)}
-                    {" · portfolio $"}{Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          )}
 
-          <section>
-            <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">Merge</h2>
-            <p className="text-[11px] text-stone-500 mb-1.5">
-              The line with the most stations is the acquirer — currently <b style={{ color: colorOf(acquirer?.id) }}>{lineOf(acquirer?.id)?.name}</b> with {acquirer?.n}.
-              Merging moves all track, stations and shares across. Payouts are not automated.
-            </p>
-            <div className="flex items-center gap-1.5 text-xs">
-              <select value={mergeFrom} onChange={(e) => setMergeFrom(Number(e.target.value))} className="bg-white border border-stone-300 rounded-sm py-0.5 flex-1 min-w-0">
-                {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-              <span className="text-stone-500">into</span>
-              <select value={mergeTo} onChange={(e) => setMergeTo(Number(e.target.value))} className="bg-white border border-stone-300 rounded-sm py-0.5 flex-1 min-w-0">
-                {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-              <button onClick={() => { if (confirm("Merge? This cannot be undone.")) doMerge(); }}
-                      className="px-2 py-0.5 bg-stone-800 text-stone-50 rounded-sm">go</button>
-            </div>
-          </section>
-
-          <section>
-            <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">Zones reached <span className="normal-case tracking-normal text-stone-400">({ZONES.length})</span></h2>
-            <div className="space-y-0.5 text-xs max-h-52 overflow-y-auto pr-1">
+          {side === "zones" && (
+            <div className="space-y-1.5 text-[14px]">
               {ZONES.map((z, zi) => {
                 const ls = LINES.filter((l) => (reach[l.id]?.zones || []).includes(zi));
                 return (
-                  <div key={z} className={`flex items-center gap-2 ${ls.length ? "" : "opacity-55"}`}>
-                    <span className="w-3 h-3 rounded-sm border border-stone-400 shrink-0" style={{ background: ZONE_COLORS[zi] }} />
+                  <div key={z} className={`flex items-center gap-2.5 ${ls.length ? "" : "text-[#9A9A94]"}`}>
+                    <span className="w-4 h-4 rounded shrink-0" style={{ background: ZONE_COLORS[zi] }} />
                     <span className="flex-1 truncate">{z}</span>
-                    {!ls.length && <span className="text-[10px] text-stone-400 italic">unreached</span>}
-                    <span className="flex gap-0.5">{ls.map((l) => <span key={l.id} className="w-2.5 h-2.5 rounded-full" style={{ background: l.color }} />)}</span>
+                    {ls.length ? <span className="flex gap-1">{ls.map((l) => <Bullet key={l.id} lid={l.id} size={20} />)}</span>
+                               : <span className="text-[12px] italic">unreached</span>}
                   </div>
                 );
               })}
             </div>
-          </section>
+          )}
 
-          <section>
-            <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">Log</h2>
-            <div className="max-h-48 overflow-auto text-xs text-stone-600 space-y-0.5">
-              {!(state.log || []).length && <p className="text-stone-500">Nothing yet.</p>}
+          {side === "log" && (
+            <div className="space-y-1.5 text-[13px]">
+              {!(state.log || []).length && <p className="text-[#6B6B66]">Nothing yet.</p>}
               {(state.log || []).map((l, i) => (
-                <div key={i} className={i < changed.log ? "text-stone-900" : ""}>
-                  {i < changed.log && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-600 mr-1 align-middle" />}
-                  <span className="font-medium">{l.who}</span> {l.note} <span className="text-stone-400">{ago(l.t)}</span>
+                <div key={i} className={`flex gap-1.5 ${i < changed.log ? "" : "text-[#3A3A36]"}`}>
+                  <span className={`mt-[7px] w-1.5 h-1.5 rounded-full shrink-0 ${i < changed.log ? "bg-[#E58A00]" : "bg-transparent"}`} />
+                  <span className="min-w-0"><b>{l.who}</b> {l.note} <span className="text-[#9A9A94]">{ago(l.t)}</span></span>
                 </div>
               ))}
             </div>
-          </section>
+          )}
         </div>
-      </div>
+      </aside>
     </div>
   );
 }
-
