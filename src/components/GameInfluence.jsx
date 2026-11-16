@@ -2,16 +2,23 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   SEED_HEX, SEED_NAMES, SEED_RIVERS, SEED_NOCROSS, ZONES, ZONE_COLORS, ZONE_OF,
   LINES, V2D, GRID, TERRAIN, R, cx, cy, parseId, edgeKey, neighbors, sharedEdge, hexDist,
-  seedMap, useRoom, Field, CONTRACTS, ERA_LABEL, eraDeck, byId, contractLabel,
+  seedMap, Field, CONTRACTS, ERA_LABEL, eraDeck, byId, contractLabel,
   MARKET, START_AT, DEFAULTS, blankSlot, blankCharter, newPlayer, makeInitial, carStats, Charter,
   makeV2, v2Player, lineOf, trackOwner, lineEdges, lineNet, lineDegree, occupants,
   stationsOf, zonesOf, perShare, priceOf, sharesLeft, countLinks, syncMarkers,
   nearestStation, stationCost, burnCount,
 } from "../lib/game.jsx";
+import { useTable, shareLink, cleanCode } from "../lib/sync.js";
+import { backend } from "../lib/storage.js";
+
+const ago = (t) => {
+  if (!t) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
+};
 
 export default function GameInfluence({ hidden }) {
-  const [state, setState] = useState(() => makeV2());
-  const [room, setRoom] = useState(""); const [roomInput, setRoomInput] = useState("");
+  const [roomInput, setRoomInput] = useState("");
   const [tab, setTab] = useState("play");
   const [mode, setMode] = useState("track");
   const [paint, setPaint] = useState("l");
@@ -22,37 +29,45 @@ export default function GameInfluence({ hidden }) {
   const [showTune, setShowTune] = useState(false);
   const [reveal, setReveal] = useState(true);
   const [status, setStatus] = useState("");
-  const [seat, setSeat] = useState(null);        // local only — not synced
-  const history = useRef([]);
+  const [showTally, setShowTally] = useState(false);
+  const [zoom, setZoom] = useState(() => (typeof window !== "undefined" && window.innerWidth < 640 ? 1.6 : 1));   // bigger hexes to tap on a phone
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
   const [mergeFrom, setMergeFrom] = useState(0);
   const [mergeTo, setMergeTo] = useState(1);
 
-  const stateRef = useRef(state); stateRef.current = state;
-  const getLocal = useCallback(() => stateRef.current, []);
-  const [push, diag] = useRoom(room, setState, "i", getLocal);
-  const commit = useCallback((mut, note) => {
-    setState((prev) => {
-      history.current = [...history.current, JSON.stringify(prev)].slice(-40);
-      const n = JSON.parse(JSON.stringify(prev));
-      mut(n);
-      if (n.settings.strict) syncMarkers(n);
-      n.v = (prev.v || 0) + 1;
-      if (note) n.log = [{ who: n.players[n.turn.active]?.name || "?", note }, ...(n.log || [])].slice(0, 60);
-      push(n); return n;
-    });
-  }, [push]);
+  const seatRef = useRef(undefined);
+  const T = useTable("i", () => makeV2(), {
+    finish: (n) => { if (n.settings.strict) syncMarkers(n); },
+    who: (s) => {
+      const sid = seatRef.current;
+      const p = sid !== null && sid !== undefined ? s.players.find((x) => x.id === sid) : s.players.find((x) => x.id === s.turn.active);
+      return p?.name || "?";
+    },
+  });
+  const { state, room, join, commit, diag, seat, setSeat, since } = T;
+  seatRef.current = seat;
+  const edit = useCallback((mut) => commit(mut, null, { quiet: true }), [commit]);
+  const syncNow = () => {};
+  const undo = () => { const r = T.undo(); if (r?.why) setStatus(r.why); };
+  const hexName = (h) => state.map?.names?.[h] || h;
 
-  const undo = useCallback(() => {
-    setState((prev) => {
-      if (!history.current.length) return prev;
-      const back = JSON.parse(history.current[history.current.length - 1]);
-      history.current = history.current.slice(0, -1);
-      back.v = (prev.v || 0) + 1;
-      push(back); return back;
+  /* what other players changed since my last move */
+  const changed = useMemo(() => {
+    const hexes = new Set(), edges = [], out = { hexes, edges, log: 0 };
+    if (!room || !since || since === state) return out;
+    const tk = new Set([...Object.keys(since.track || {}), ...Object.keys(state.track || {})]);
+    tk.forEach((k) => {
+      if (JSON.stringify(since.track?.[k]) !== JSON.stringify(state.track?.[k])) {
+        edges.push({ k, gone: !state.track?.[k] }); k.split("|").forEach((h) => hexes.add(h));
+      }
     });
-  }, [push]);
-  const edit = useCallback((mut) => { setState((p) => { const n = JSON.parse(JSON.stringify(p)); mut(n); n.v = (p.v || 0) + 1; return n; }); }, []);
-  const syncNow = useCallback(() => { setState((p) => { push(p); return p; }); }, [push]);
+    const sk = new Set([...Object.keys(since.stations || {}), ...Object.keys(state.stations || {})]);
+    sk.forEach((h) => { if (JSON.stringify(since.stations?.[h]) !== JSON.stringify(state.stations?.[h])) hexes.add(h); });
+    const newest = since.log?.[0]?.t || 0;
+    out.log = (state.log || []).filter((l) => (l.t || 0) > newest).length;
+    return out;
+  }, [room, since, state]);
 
   const S = state.settings || V2D;
   const map = state.map || seedMap();
@@ -135,10 +150,11 @@ export default function GameInfluence({ hidden }) {
       const k = edgeKey(pending, id);
 
       if (!S.strict) {                       // SANDBOX: place or clear, no rules, no cost
+        const removing = trackOwner(state, k) === activeLine;
         commit((s2) => {
           if (trackOwner(s2, k) === activeLine) delete s2.track[k];
           else s2.track[k] = [activeLine];
-        });
+        }, `${removing ? "removed" : "laid"} ${lineOf(activeLine).name} track ${hexName(pending)} – ${hexName(id)}`);
         setPending(id); setStatus(""); return;
       }
 
@@ -163,15 +179,16 @@ export default function GameInfluence({ hidden }) {
         if (s2.settings.ownership === "hex") { const ix = s2.bag.lastIndexOf(activeLine); if (ix >= 0) { s2.bag.splice(ix, 1); s2.onboard.push(activeLine); } }
         s2.track[k] = [activeLine];
         if (s2.settings.autoAP) s2.turn.ap = Math.max(0, s2.turn.ap - 1);
-      }, `${lineOf(activeLine).name} track`);
+      }, `laid ${lineOf(activeLine).name} track ${hexName(pending)} – ${hexName(id)}`);
       setPending(id); setStatus(""); return;
     }
     if (mode === "station") {
       if (!S.strict) {                       // SANDBOX
+        const removing = state.stations[id]?.o === activeLine;
         commit((s2) => {
           if (s2.stations[id] && s2.stations[id].o === activeLine) delete s2.stations[id];
           else s2.stations[id] = { o: activeLine };
-        });
+        }, `${removing ? "removed" : "built"} a ${lineOf(activeLine).name} station at ${hexName(id)}`);
         setStatus(""); return;
       }
       if (!state.stations[id]) {
@@ -190,7 +207,7 @@ export default function GameInfluence({ hidden }) {
         for (let i = 0; i < c - burn; i++) s2.bag.push(activeLine);
         s2.stations[id] = { o: activeLine };
         if (s2.settings.autoAP) s2.turn.ap = Math.max(0, s2.turn.ap - 1);
-      }, `${lineOf(activeLine).name} station`);
+      }, `${lineOf(activeLine).name} station at ${hexName(id)}`);
       return;
     }
   };
@@ -314,13 +331,25 @@ export default function GameInfluence({ hidden }) {
         </div>
         <button onClick={() => setShowZones((z) => !z)} className={`px-2.5 py-1 text-sm rounded-sm border ${showZones ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>Zones</button>
         <button onClick={() => setShowTune((x) => !x)} className={`px-2.5 py-1 text-sm rounded-sm border ${showTune ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>Tuning</button>
-        <button onClick={() => { const f = makeV2(S); f.settings = { ...S }; f.v = (state.v || 0) + 1; setState(f); push(f); }}
+        <button onClick={() => { if (!confirm(room ? `Start a new game at table "${room}"? This resets the board for everyone.` : "Start a new game?")) return;
+                                  commit(() => { const f = makeV2(S); f.settings = { ...S }; f.players = f.players.map((p, i) => state.players[i] ? { ...p, name: state.players[i].name } : p); return f; }, "started a new game"); }}
                 className="px-2.5 py-1 text-sm rounded-sm border border-stone-400">New setup</button>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="table code" className="w-24 bg-white/60 border border-stone-400 px-2 py-1 rounded-sm" />
-          <button onClick={() => { const c = roomInput.trim().toLowerCase().replace(/[^a-z0-9]/g, ""); if (c) { setRoom(c); setStatus("joined " + c); } }}
-                  className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Join</button>
-          {room && <button onClick={() => { push({ ...state, v: (state.v || 0) + 1 }); setStatus("pushed"); }} className="px-2.5 py-1 border border-stone-500 rounded-sm">Push</button>}
+          {room ? (
+            <>
+              <span className="text-stone-600">Table <b className="text-stone-900">{room}</b></span>
+              <button onClick={() => { const u = shareLink(room); navigator.clipboard?.writeText(u).then(() => setStatus("link copied — send it to the other players"), () => window.prompt("Copy this link:", u)); }}
+                      className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Copy invite link</button>
+              <button onClick={() => { if (confirm("Leave this table? You can rejoin with the same code.")) join(""); }}
+                      className="px-2.5 py-1 border border-stone-500 rounded-sm">Leave</button>
+            </>
+          ) : (
+            <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const c = cleanCode(roomInput); if (c) { join(c); setStatus(""); } }}>
+              <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="table code, e.g. friday"
+                     className="w-44 bg-white/60 border border-stone-400 px-2 py-1 rounded-sm" />
+              <button type="submit" className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Start or join table</button>
+            </form>
+          )}
         </div>
       </div>
 
@@ -340,7 +369,9 @@ export default function GameInfluence({ hidden }) {
         <button onClick={callDividends} disabled={S.strict && state.turn.usedSlot}
                 className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60 disabled:opacity-40">Call dividends</button>
         <button onClick={endTurn} className="px-3 py-1 text-sm bg-stone-800 text-stone-50 rounded-sm">End turn</button>
-        <button onClick={undo} className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60">↶ Undo</button>
+        <button onClick={undo} disabled={!T.canUndo} title="Takes back your own last move"
+                className="px-2.5 py-1 text-sm rounded-sm border border-stone-500 hover:bg-white/60 disabled:opacity-40">↶ Undo my move</button>
+        <button onClick={() => setShowTally((x) => !x)} className={`px-2.5 py-1 text-sm rounded-sm border ${showTally || over ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-500 hover:bg-white/60"}`}>Tally</button>
         <label className="flex items-center gap-1 text-[11px] text-stone-600">
           <input type="checkbox" checked={!!S.strict} onChange={(e) => commit((s2) => { s2.settings.strict = e.target.checked; })} />
           enforce rules
@@ -394,42 +425,106 @@ export default function GameInfluence({ hidden }) {
         </div>
       )}
 
-      {/* sync status — the first thing to check when playing with someone else */}
-      <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]"
-           style={{ background: !room ? "#EDEDE2" : diag.err > diag.ok ? "#FBE3E0" : "#E4F0E4" }}>
-        <span className="font-semibold uppercase tracking-wide text-stone-600">Sync</span>
-        {!room ? <span className="text-stone-600">not joined — type a table code and press Join. Both players need the same code.</span> : (
-          <>
-            <span>table <b>{room}</b></span>
-            <span className="tabular-nums">local v{state.v}</span>
-            <span className="tabular-nums">table v{diag.remote < 0 ? "—" : diag.remote}</span>
-            <span className="tabular-nums text-emerald-800">{diag.ok} ok</span>
-            <span className={`tabular-nums ${diag.err ? "text-red-800 font-semibold" : "text-stone-500"}`}>{diag.err} failed</span>
-            <span className="text-stone-600">{diag.last}</span>
-            <span className="text-stone-500">{diag.at}</span>
-            <button onClick={() => push({ ...state, v: (state.v || 0) + 1 })} className="ml-auto px-2 py-0.5 border border-stone-500 rounded-sm">Push mine now</button>
-          </>
-        )}
-      </div>
+      {showTally || over ? (() => {
+        const rows = state.players.map((p) => {
+          const shares = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0);
+          return { p, cash: p.cash || 0, shares, total: (p.cash || 0) + shares };
+        }).sort((x, y) => y.total - x.total);
+        return (
+          <div className="px-4 py-3 border-b border-stone-400 bg-white/70">
+            <div className="flex items-baseline gap-3 mb-1.5">
+              <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-sm font-bold">{over ? "Final tally" : "Tally if the game ended now"}</h2>
+              <span className="text-[11px] text-stone-500">cash + every share at today&rsquo;s price. Merger bonuses are not included.</span>
+              {!over && <button onClick={() => setShowTally(false)} className="ml-auto text-xs underline">close</button>}
+            </div>
+            <table className="text-sm tabular-nums">
+              <thead><tr className="text-[11px] uppercase tracking-wide text-stone-500"><th className="text-left pr-6 font-medium"></th><th className="text-left pr-6 font-medium">Investor</th><th className="text-right pr-6 font-medium">Cash</th><th className="text-right pr-6 font-medium">Shares</th><th className="text-right font-medium">Total</th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.p.id} className={i === 0 ? "font-bold" : ""}>
+                    <td className="pr-6 text-stone-500">{i + 1}</td>
+                    <td className="pr-6">{r.p.name}</td>
+                    <td className="pr-6 text-right">${r.cash}</td>
+                    <td className="pr-6 text-right">${r.shares}</td>
+                    <td className="text-right">${r.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })() : null}
 
-      <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] bg-white/50">
-        <span className="font-semibold uppercase tracking-wide text-stone-600">You are</span>
-        <span className="flex gap-1">
+      {/* sync status — the first thing to check when playing with someone else */}
+      {(() => {
+        const bad = !!diag.err;
+        const live = diag.link === "live";
+        return (
+          <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]"
+               style={{ background: !room ? "#EDEDE2" : bad ? "#FBE3E0" : backend === "local" ? "#FBF1D9" : "#E4F0E4" }}>
+            <span className="font-semibold uppercase tracking-wide text-stone-600">Sync</span>
+            {!room ? <span className="text-stone-600">Playing on this screen only. Start or join a table to play with others — everyone uses the same code, or the invite link.</span> : (
+              <>
+                {backend === "local"
+                  ? <span className="text-amber-900 font-semibold">Multiplayer isn&rsquo;t set up on this site yet — this table is shared only between tabs in this browser.</span>
+                  : <span className={live ? "text-emerald-800 font-semibold" : "text-stone-700"}>{live ? "● live" : diag.link || "connecting"}</span>}
+                <span className="tabular-nums text-stone-600">v{state.v}</span>
+                {diag.pending > 0 && <span className="text-stone-700">saving…</span>}
+                {diag.conflicts > 0 && <span className="text-stone-500" title="Times two players moved at once; both moves were kept">{diag.conflicts} simultaneous move{diag.conflicts > 1 ? "s" : ""} merged</span>}
+                {diag.note && <span className="text-amber-900">{diag.note}</span>}
+                {bad && <span className="text-red-800 font-semibold">{diag.err}</span>}
+                {diag.at && <span className="ml-auto text-stone-500">last synced {diag.at}</span>}
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {room && T.loaded && seat === undefined ? (
+        <div className="px-4 py-3 border-b-2 border-stone-800 bg-amber-50 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-semibold">Which player are you?</span>
           {state.players.map((p) => (
-            <button key={p.id} onClick={() => setSeat(p.id)}
-              className={`px-2 py-0.5 rounded-sm border ${seat === p.id ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400 hover:bg-white"}`}>
-              {p.name}
-            </button>
+            <button key={p.id} onClick={() => setSeat(p.id)} className="px-3 py-1 rounded-sm border-2 border-stone-800 bg-white hover:bg-stone-800 hover:text-stone-50">{p.name}</button>
           ))}
-          <button onClick={() => setSeat(null)} className={`px-2 py-0.5 rounded-sm border ${seat === null ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>anyone</button>
-        </span>
-        {seat !== null && seat !== me && (
-          <span className="px-2 py-0.5 rounded-sm bg-amber-100 text-amber-900 font-semibold">
-            It is {cur?.name}&rsquo;s turn, not yours — your clicks will move their pieces
+          <button onClick={() => setSeat(null)} className="px-3 py-1 rounded-sm border border-stone-400">Everyone at this screen</button>
+          <span className="text-[11px] text-stone-500 basis-full">Rename players in the Investors panel first if you like. Your choice is remembered for this table.</span>
+        </div>
+      ) : (
+        <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] bg-white/50">
+          <span className="font-semibold uppercase tracking-wide text-stone-600">You are</span>
+          <span className="flex flex-wrap gap-1">
+            {state.players.map((p) => (
+              <button key={p.id} onClick={() => setSeat(p.id)}
+                className={`px-2 py-0.5 rounded-sm border ${seat === p.id ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400 hover:bg-white"}`}>
+                {p.name}
+              </button>
+            ))}
+            <button onClick={() => setSeat(null)} className={`px-2 py-0.5 rounded-sm border ${seat === null || seat === undefined ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>everyone here</button>
           </span>
-        )}
-        {status && <span className="ml-auto text-stone-700">{status}</span>}
-      </div>
+          {seat !== null && seat !== undefined && (seat === me
+            ? <span className="px-2 py-0.5 rounded-sm bg-emerald-100 text-emerald-900 font-semibold">Your turn</span>
+            : <span className="px-2 py-0.5 rounded-sm bg-amber-100 text-amber-900 font-semibold">It is {cur?.name}&rsquo;s turn — your clicks will move their pieces</span>)}
+          {status && <span className="ml-auto text-stone-700">{status}</span>}
+        </div>
+      )}
+
+      {room && (state.log || []).length > 0 && (
+        <div className="px-4 py-1.5 border-b border-stone-300 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs bg-white/30">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">Latest</span>
+          {(state.log || []).slice(0, 3).map((l, i) => (
+            <span key={i} className={i < changed.log ? "text-stone-900" : "text-stone-500"}>
+              {i < changed.log && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-600 mr-1 align-middle" />}
+              <b className="font-semibold">{l.who}</b> {l.note} <span className="text-stone-400">{ago(l.t)}</span>
+            </span>
+          ))}
+          {changed.hexes.size > 0 && (
+            <span className="ml-auto flex items-center gap-2">
+              <span className="text-amber-900">Changes since your last move are outlined on the board</span>
+              <button onClick={T.clearSince} className="underline text-stone-600">clear</button>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row">
         <div className="flex-1 min-w-0 p-3">
@@ -451,8 +546,14 @@ export default function GameInfluence({ hidden }) {
             ))}
           </div>
 
-          <div className="bg-white/40 border border-stone-400 rounded-sm overflow-auto" style={{ maxHeight: "58vh" }}>
-            <svg viewBox={`${view.x0} ${view.y0} ${view.w} ${view.h}`} className="w-full" style={{ minWidth: 720 }}>
+          <div className="relative">
+          <div className="absolute right-2 top-2 z-10 flex rounded-sm overflow-hidden border border-stone-500 bg-white/90 text-xs shadow-sm">
+            {[[1, "Fit"], [1.6, "Zoom"], [2.4, "Zoom ×2"]].map(([z, l]) => (
+              <button key={z} onClick={() => setZoom(z)} className={`px-2 py-1 ${zoom === z ? "bg-stone-800 text-stone-50" : ""}`}>{l}</button>
+            ))}
+          </div>
+          <div className="bg-white/40 border border-stone-400 rounded-sm overflow-auto max-h-[78vh] lg:max-h-[70vh]">
+            <svg viewBox={`${view.x0} ${view.y0} ${view.w} ${view.h}`} style={{ width: `${zoom * 100}%`, display: "block" }}>
               {cells.map(({ c, r, id }) => {
                 const k = map.hexes[id]; if (!k && tab !== "map") return null;
                 const x = cx(c, r), y = cy(c, r), z = ZONE_OF[id];
@@ -464,6 +565,7 @@ export default function GameInfluence({ hidden }) {
                     {tab === "play" && netHexes.has(id) && <polygon points={hexPath(x, y)} fill="none" stroke={colorOf(activeLine)} strokeWidth="2" opacity="0.5" />}
                     {sel === id && <polygon points={hexPath(x, y)} fill="none" stroke="#B45309" strokeWidth="3" />}
                     {pending === id && <polygon points={hexPath(x, y)} fill="none" stroke="#111" strokeWidth="3" />}
+                    {changed.hexes.has(id) && <polygon points={hexPath(x, y)} fill="#F59E0B22" stroke="#D97706" strokeWidth="3.5" strokeDasharray="7 4" pointerEvents="none" />}
                     {map.names[id] && <text x={x} y={y + 19} textAnchor="middle" style={{ fontSize: 7, pointerEvents: "none" }} fill="#2b2b26">
                       {map.names[id].length > 17 ? map.names[id].split(" ").slice(0, 2).join(" ") : map.names[id]}</text>}
                   </g>
@@ -482,6 +584,11 @@ export default function GameInfluence({ hidden }) {
                 return <line key={"lg" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)}
                              stroke={colorOf(activeLine)} strokeWidth="3" strokeDasharray="4 4"
                              opacity={ok ? 0.55 : 0.18} pointerEvents="none" />;
+              })}
+              {changed.edges.map(({ k, gone }) => {
+                const [a, b] = k.split("|"); const [ac, ar] = parseId(a), [bc, br] = parseId(b);
+                return <line key={"ch" + k} x1={cx(ac, ar)} y1={cy(ac, ar)} x2={cx(bc, br)} y2={cy(bc, br)} pointerEvents="none"
+                             stroke={gone ? "#7c7c70" : "#F59E0B"} strokeWidth={gone ? 4 : 16} strokeDasharray={gone ? "3 5" : ""} strokeLinecap="round" opacity={gone ? 0.9 : 0.55} />;
               })}
               {Object.keys(state.track).map((k) => {
                 const lid = trackOwner(state, k);
@@ -509,6 +616,7 @@ export default function GameInfluence({ hidden }) {
               })}
             </svg>
           </div>
+          </div>
 
           <div className="mt-2 border border-stone-400 rounded-sm bg-white/60 p-2.5">
             <div className="flex items-baseline justify-between mb-1.5">
@@ -523,12 +631,12 @@ export default function GameInfluence({ hidden }) {
               {LINES.map((l) => (
                 <span key={l.id} className="flex items-center rounded-sm" style={{ border: `1px solid ${l.color}` }}>
                   <button onClick={() => commit((s2) => { const who = seat !== null ? seat : s2.turn.active;
-                            const q = s2.players.find((x) => x.id === who); const ix = q.hand.indexOf(l.id); if (ix >= 0) q.hand.splice(ix, 1); })}
+                            const q = s2.players.find((x) => x.id === who); const ix = q.hand.indexOf(l.id); if (ix >= 0) q.hand.splice(ix, 1); }, `removed a ${l.name} disc`)}
                           className="px-1 text-[11px] leading-none">−</button>
                   <span className="w-3 h-3 rounded-full" style={{ background: l.color }} />
                   <button onClick={() => commit((s2) => { const who = seat !== null ? seat : s2.turn.active;
                             const q = s2.players.find((x) => x.id === who); q.hand.push(l.id);
-                            const ix = s2.bag.indexOf(l.id); if (ix >= 0) s2.bag.splice(ix, 1); })}
+                            const ix = s2.bag.indexOf(l.id); if (ix >= 0) s2.bag.splice(ix, 1); }, `added a ${l.name} disc`)}
                           className="px-1 text-[11px] leading-none">+</button>
                 </span>
               ))}
@@ -550,7 +658,7 @@ export default function GameInfluence({ hidden }) {
           </div>
         </div>
 
-        <div className="w-full lg:w-[390px] shrink-0 border-l-2 border-stone-800 p-4 space-y-5 text-sm">
+        <div className="w-full lg:w-[390px] shrink-0 border-t-2 lg:border-t-0 lg:border-l-2 border-stone-800 p-4 space-y-5 text-sm">
           <section>
             <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">The seven lines</h2>
             <div className="space-y-1">
@@ -603,7 +711,7 @@ export default function GameInfluence({ hidden }) {
                              onChange={(e) => edit((s2) => { s2.players[idx].cash = Number(e.target.value) || 0; })}
                              className="w-16 bg-transparent border-b border-stone-300 text-right tabular-nums font-semibold focus:outline-none text-sm" />
                     </span>
-                    <button onClick={() => commit((s) => { s.turn.active = p.id; })}
+                    <button onClick={() => commit((s) => { s.turn.active = p.id; }, `made ${p.name} active`)}
                             className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${p.id === me ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400"}`}>
                       {p.id === me ? "active" : "make active"}</button>
                   </div>
@@ -613,9 +721,9 @@ export default function GameInfluence({ hidden }) {
                       return (
                         <span key={l.id} className={`flex items-center gap-0.5 rounded-sm px-1 ${n ? "" : "opacity-35"}`} style={{ border: `1px solid ${l.color}` }}>
                           <span className="w-2 h-2 rounded-full" style={{ background: l.color }} />
-                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = Math.max(0, (q.shares[l.id] || 0) - 1); s.sold[l.id] = Math.max(0, (s.sold[l.id] || 0) - 1); })} className="px-0.5 text-[11px] leading-none">−</button>
+                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = Math.max(0, (q.shares[l.id] || 0) - 1); s.sold[l.id] = Math.max(0, (s.sold[l.id] || 0) - 1); }, `took a ${l.name} share from ${p.name}`)} className="px-0.5 text-[11px] leading-none">−</button>
                           <span className="text-[11px] font-semibold tabular-nums w-3 text-center">{n}</span>
-                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = (q.shares[l.id] || 0) + 1; s.sold[l.id] = (s.sold[l.id] || 0) + 1; })} className="px-0.5 text-[11px] leading-none">+</button>
+                          <button onClick={() => commit((s) => { const q = s.players.find((x) => x.id === p.id); q.shares[l.id] = (q.shares[l.id] || 0) + 1; s.sold[l.id] = (s.sold[l.id] || 0) + 1; }, `gave ${p.name} a ${l.name} share`)} className="px-0.5 text-[11px] leading-none">+</button>
                         </span>
                       );
                     })}
@@ -667,9 +775,14 @@ export default function GameInfluence({ hidden }) {
 
           <section>
             <h2 style={{ fontFamily: "'Roboto Slab', serif" }} className="text-xs uppercase tracking-widest mb-2 text-stone-600">Log</h2>
-            <div className="max-h-28 overflow-auto text-xs text-stone-600 space-y-0.5">
+            <div className="max-h-48 overflow-auto text-xs text-stone-600 space-y-0.5">
               {!(state.log || []).length && <p className="text-stone-500">Nothing yet.</p>}
-              {(state.log || []).map((l, i) => <div key={i}><span className="font-medium">{l.who}</span> {l.note}</div>)}
+              {(state.log || []).map((l, i) => (
+                <div key={i} className={i < changed.log ? "text-stone-900" : ""}>
+                  {i < changed.log && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-600 mr-1 align-middle" />}
+                  <span className="font-medium">{l.who}</span> {l.note} <span className="text-stone-400">{ago(l.t)}</span>
+                </div>
+              ))}
             </div>
           </section>
         </div>

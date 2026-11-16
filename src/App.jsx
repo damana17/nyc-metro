@@ -3,7 +3,13 @@ import GameContracts from "./components/GameContracts";
 import GameInfluence from "./components/GameInfluence";
 
 export default function App() {
-  const [version, setVersion] = useState("influence");
+  const [version, setVersionState] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("g") === "contracts" ? "contracts" : "influence"; } catch (e) { return "influence"; }
+  });
+  const setVersion = (v) => {
+    setVersionState(v);
+    try { const u = new URL(window.location.href); if (v === "contracts") u.searchParams.set("g", v); else u.searchParams.delete("g"); window.history.replaceState(null, "", u.toString()); } catch (e) { /* ignore */ }
+  };
   return (
     <div className="w-full min-h-screen" style={{ background: "#F1F1D3", fontFamily: "'IBM Plex Sans', ui-sans-serif, system-ui" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');`}</style>
@@ -15,7 +21,7 @@ export default function App() {
               className={`px-3 py-1.5 text-sm font-medium ${version === k ? "bg-stone-800 text-stone-50" : "hover:bg-white/60"}`}>{l}</button>
           ))}
         </div>
-        <span className="text-xs text-stone-600">
+        <span className="hidden sm:inline text-xs text-stone-600">
           {version === "contracts"
             ? "Players are corporations. Contracts are auctioned; lines earn once open."
             : "Players are investors. Seven neutral lines, influence discs, shares."}

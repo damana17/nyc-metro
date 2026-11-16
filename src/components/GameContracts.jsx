@@ -2,16 +2,17 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   SEED_HEX, SEED_NAMES, SEED_RIVERS, SEED_NOCROSS, ZONES, ZONE_COLORS, ZONE_OF,
   LINES, V2D, GRID, TERRAIN, R, cx, cy, parseId, edgeKey, neighbors, sharedEdge, hexDist,
-  seedMap, useRoom, Field, CONTRACTS, ERA_LABEL, eraDeck, byId, contractLabel,
+  seedMap, Field, CONTRACTS, ERA_LABEL, eraDeck, byId, contractLabel,
   MARKET, START_AT, DEFAULTS, blankSlot, blankCharter, newPlayer, makeInitial, carStats, Charter,
   makeV2, v2Player, lineOf, trackOwner, lineEdges, lineNet, lineDegree, occupants,
   stationsOf, zonesOf, perShare, priceOf, sharesLeft, countLinks, syncMarkers,
   nearestStation, stationCost, burnCount,
 } from "../lib/game.jsx";
 
+import { useTable, shareLink, cleanCode } from "../lib/sync.js";
+
 export default function GameContracts({ hidden }) {
-  const [state, setState] = useState(makeInitial);
-  const [room, setRoom] = useState(""); const [roomInput, setRoomInput] = useState("");
+  const [roomInput, setRoomInput] = useState("");
   const [tab, setTab] = useState("play");
   const [mode, setMode] = useState("build");
   const [paint, setPaint] = useState("l");
@@ -25,26 +26,16 @@ export default function GameContracts({ hidden }) {
   const [hoverC, setHoverC] = useState(null);
   const fileRef = useRef(null);
 
-  const stateRef = useRef(state); stateRef.current = state;
-  const getLocal = useCallback(() => stateRef.current, []);
-  const [push, diag] = useRoom(room, setState, "c", getLocal);
+  const T = useTable("c", makeInitial, { who: (s) => s.players.find((p) => p.id === s.turn.active)?.abbr || "?" });
+  const { state, room, join, commit } = T;
   useEffect(() => {
+    if (!T.loaded) return;
     if (state.market && !state.market.deck.length && !state.market.up.length) {
-      setState((s) => {
-        const e = s.market.era || 1, d = eraDeck(e), n = s.settings.faceUp;
-        return { ...s, market: { era: e, deck: d.slice(n), up: d.slice(0, n) }, v: (s.v || 0) + 1 };
-      });
+      commit((s) => { const e = s.market.era || 1, d = eraDeck(e), n = s.settings.faceUp; s.market = { era: e, deck: d.slice(n), up: d.slice(0, n) }; });
     }
-  }, []); // eslint-disable-line
-  const commit = useCallback((mut, note) => {
-    setState((prev) => {
-      const n = JSON.parse(JSON.stringify(prev)); mut(n); n.v = (prev.v || 0) + 1;
-      if (note) n.log = [{ who: n.players[n.turn.active]?.abbr || "?", note }, ...(n.log || [])].slice(0, 50);
-      push(n); return n;
-    });
-  }, [push]);
-  const edit = useCallback((mut) => { setState((p) => { const n = JSON.parse(JSON.stringify(p)); mut(n); n.v = (p.v || 0) + 1; return n; }); }, []);
-  const syncNow = useCallback(() => { setState((p) => { push(p); return p; }); }, [push]);
+  }, [T.loaded]); // eslint-disable-line
+  const edit = useCallback((mut) => commit(mut, null, { quiet: true }), [commit]);
+  const syncNow = () => {};
 
   const map = state.map || seedMap();
   const hexForName = useCallback((n) => {
@@ -270,10 +261,18 @@ export default function GameContracts({ hidden }) {
         </div>
         <button onClick={() => setShowTune((x) => !x)} className={`px-3 py-1 text-sm rounded-sm border ${showTune ? "bg-stone-800 text-stone-50 border-stone-800" : "border-stone-400 hover:bg-white/60"}`}>Tuning</button>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="table code" className="w-28 bg-white/60 border border-stone-400 px-2 py-1 rounded-sm" />
-          <button onClick={() => { const c = roomInput.trim().toLowerCase().replace(/[^a-z0-9]/g, ""); if (c) { setRoom(c); setStatus("joined " + c); } }}
-                  className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Join</button>
-          {room && <button onClick={() => { push({ ...state, v: (state.v || 0) + 1 }); setStatus("pushed"); }} className="px-3 py-1 border border-stone-500 rounded-sm">Push</button>}
+          {room ? (
+            <>
+              <button onClick={() => { const u = shareLink(room, "contracts"); navigator.clipboard?.writeText(u).then(() => setStatus("invite link copied"), () => window.prompt("Copy this link:", u)); }}
+                      className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Copy invite link</button>
+              <button onClick={() => join("")} className="px-2.5 py-1 border border-stone-500 rounded-sm">Leave</button>
+            </>
+          ) : (
+            <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); const c = cleanCode(roomInput); if (c) join(c); }}>
+              <input value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="table code" className="w-28 bg-white/60 border border-stone-400 px-2 py-1 rounded-sm" />
+              <button type="submit" className="px-3 py-1 bg-stone-800 text-stone-50 rounded-sm">Join</button>
+            </form>
+          )}
           <span className="text-xs text-stone-600">{room ? `“${room}”` : "solo"}{status && ` · ${status}`}</span>
         </div>
       </div>
@@ -687,7 +686,7 @@ export default function GameContracts({ hidden }) {
           <button onClick={() => { if (!confirm("Reset the game? Your map and tuning are kept.")) return;
                     const f = makeInitial(); f.map = JSON.parse(JSON.stringify(map)); f.settings = { ...S };
                     f.players = state.players.map((p) => ({ ...p, cash: S.subsidy, done: 0, shares: {}, mainline: 0, mkt: START_AT, charter: blankCharter(S) }));
-                    f.ridership = 100; f.v = (state.v || 0) + 1; setState(f); push(f); }}
+                    f.ridership = 100; commit(() => f, "reset the game"); }}
                   className="text-xs text-stone-500 underline">Reset game (keep map & tuning)</button>
         </div>
       </div>

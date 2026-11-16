@@ -69,13 +69,19 @@ Pointy-top hexes in odd-r offset, 13 columns by 14 rows, traced from the physica
 
 ### Sync
 
-`useRoom` in `game.jsx` polls the store every two seconds and pushes on every change, with last-write-wins. Each version namespaces its own key, so a V1 table and a V2 table with the same code don't collide. The Sync bar at the top of V2 reports what the layer is actually doing — read and write counts, the version in the shared table, and the last error verbatim.
+`src/lib/sync.js` (`useTable`) keeps one shared state per table. A move is a function over the state; moves are queued and saved with a **conditional write** ("only if the table is still at v41"). If another player saved first, the write is refused, the table is re-read and the same moves are replayed on top, so simultaneous moves are both kept. With Supabase, changes arrive over Realtime; a 5-second poll is the fallback.
+
+- **Invite link:** `?t=<code>` joins a table (`&g=contracts` for V1). The last table and your seat are remembered in this browser.
+- **Seat:** joining asks which player you are; the log records moves under that name.
+- **Changes since your last move** are outlined on the board and marked in the Latest strip and Log.
+- **Undo my move** takes back only your own last save, and asks first if others have moved since.
+- **Tally** ranks players by cash plus shares at current price (shown automatically once the round limit passes).
 
 ---
 
 ## Known gaps
 
 - **The merge is not implemented.** Simulation settled on a threshold of four stations on both lines, the line with more stations acquiring, and Acquire-style majority/minority bonuses at roughly 5×/2× share price. None of that is coded — there's a manual merge control that moves track, stations and shares across, and no payout.
-- **Hands are not hidden.** Everyone sees the seated player's discs. V2's design calls for hidden hands, which needs a backend that can hold per-player secret state.
-- **No end-of-game scoring.** The round limit shows GAME OVER but doesn't stop play or total anything.
+- **Hands are not hidden.** Everyone sees the seated player's discs.
+- **End-of-game scoring is cash + shares only.** Merger bonuses are not included in the tally.
 - **V1 is frozen.** It reflects the earlier design and hasn't been updated since the direction changed.

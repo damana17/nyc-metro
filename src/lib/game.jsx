@@ -1,7 +1,6 @@
 /* Shared board data, geometry and pure game helpers.
    Extracted from the playtest artifact — safe to split further. */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { storage } from "./storage";
 
 
 /* ═══════════════════════════════════════════════════════════
@@ -183,61 +182,6 @@ export const makeInitial = () => ({
   settings: { ...DEFAULTS },
   log: [],
 });
-
-export function useRoom(room, setState, ns = "", getLocal) {
-  const pushing = useRef(false), lastSeen = useRef(-1);
-  const [diag, setDiag] = useState({ ok: 0, err: 0, last: "", remote: -1, at: "" });
-  const key = (r) => "nycmetro" + ns + r;
-
-  const push = useCallback(async (next) => {
-    if (!room) return;
-    pushing.current = true;
-    try {
-      await storage.set(key(room), JSON.stringify(next));
-      lastSeen.current = next.v;
-      setDiag((d) => ({ ...d, ok: d.ok + 1, last: "pushed v" + next.v, at: new Date().toLocaleTimeString() }));
-    } catch (e) {
-      setDiag((d) => ({ ...d, err: d.err + 1, last: "PUSH FAILED: " + (e?.message || e) }));
-    } finally { pushing.current = false; }
-  }, [room, ns]);
-
-  useEffect(() => {
-    if (!room) return;
-    let alive = true;
-    const pull = async (seedIfEmpty) => {
-      if (pushing.current) return;
-      let res = null, missing = false;
-      try {
-        res = await storage.get(key(room));
-        if (!res) missing = true;
-      } catch (e) { missing = true; }
-      if (!alive) return;
-      if (missing) {
-        // nobody has published this table yet — publish ours so the other side has something to find
-        if (seedIfEmpty && getLocal) {
-          const mine = getLocal();
-          if (mine) { await push({ ...mine, v: (mine.v || 0) + 1 }); setDiag((d) => ({ ...d, last: "table was empty — published mine" })); }
-        } else {
-          setDiag((d) => ({ ...d, err: d.err + 1, last: "table empty or unreadable", at: new Date().toLocaleTimeString() }));
-        }
-        return;
-      }
-      try {
-        const remote = JSON.parse(res.value);
-        setDiag((d) => ({ ...d, ok: d.ok + 1, remote: remote.v, at: new Date().toLocaleTimeString(),
-                          last: remote.v > lastSeen.current ? "took remote v" + remote.v : "in step at v" + remote.v }));
-        if (remote.v > lastSeen.current) { lastSeen.current = remote.v; setState(remote); }
-      } catch (e) {
-        setDiag((d) => ({ ...d, err: d.err + 1, last: "bad payload: " + (e?.message || e) }));
-      }
-    };
-    pull(true);
-    const t = setInterval(() => pull(false), 2000);
-    return () => { alive = false; clearInterval(t); };
-  }, [room, setState, ns, push, getLocal]);
-
-  return [push, diag];
-}
 
 export const Field = ({ label, value, onChange, onDone, step = 10, suffix }) => (
   <label className="flex items-center justify-between gap-2 py-0.5">
