@@ -1,0 +1,60 @@
+{
+ "merges3": {
+  "label": "+ merges at 3 stations",
+  "settings": {
+   "scoring": "base",
+   "investPerTurn": 2,
+   "snake": true,
+   "merges": true,
+   "mergeAt": 3
+  },
+  "theta": {
+   "phi": 1.1182262503851668,
+   "wDisc": 2.807670429459541,
+   "wPot": 13.638212822732749,
+   "lambda": 0.6799373099836519,
+   "noise": 1.979034009327007
+  },
+  "games": 800,
+  "seats": [
+   0.24125,
+   0.49625,
+   0.2625
+  ],
+  "leadChanges": 4.0375,
+  "lockRound": 9.485,
+  "margin": 0.1671033478893741,
+  "winnerAheadR5": 0.60375,
+  "winnerAheadR10": 0.73875,
+  "mergers": 3.385,
+  "gamesWithMerge": 0.965,
+  "firstMergeRound": 8.22538860103627,
+  "mergeBonusShare": 0.1770321280274382,
+  "divShare": 0.520174625932744,
+  "contested": 3.3375,
+  "cos": 0.7837427645986712,
+  "stations": 36.65625,
+  "track": 46.34625,
+  "divCalls": 16.12,
+  "lookaheadWin": 0.6425,
+  "lookaheadSE": 0.023963187913965036,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.24125,
+   0.34125,
+   0.53,
+   0.6525,
+   0.60375,
+   0.645,
+   0.65375,
+   0.68125,
+   0.685,
+   0.73875,
+   0.74875,
+   0.81,
+   0.79125,
+   0.89,
+   1
+  ]
+ }
+}

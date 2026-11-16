@@ -45,6 +45,14 @@ export const DEFAULTS = { ...V2D, strict: true, autoAP: true, players: 3, scorin
   rotateStart: false,   // the start player moves one seat left each round
   snake: false,         // turn order reverses every round: 1-2-3, 3-2-1, 1-2-3 ...
   flatRound1: false,    // in round 1 every share costs the starting price (the step starts counting from round 2)
+  /* merges (designed, not yet in the app): when two lines' networks touch and both have at least
+     mergeAt stations, the line with more stations absorbs the other. The absorbed line's majority and
+     minority holders get majBonus× / minBonus× its base price, then every holder sells its shares to
+     the bank at that price. Its track, stations and disc colour become the acquirer's. */
+  merges: false, mergeAt: 4,
+  safeAt: 0,            // if set, a line with this many stations can never be absorbed (Acquire's "safe" chain)
+  /* owned dividends: the caller names ONE line; only that line pays and only its price rises */
+  divOne: false,
 };
 
 export function newGame(over = {}, seed = 1) {
@@ -57,8 +65,8 @@ export function newGame(over = {}, seed = 1) {
     bag, burned: 0, onboard: Array(NL).fill(0),
     players: [], prices: Array(NL).fill(S.startPrice), sold: Array(NL).fill(0),
     turn: { active: 0, ap: S.apPerTurn, round: 1, invests: 0, usedSlot: false, n: 0, k: 0, start: 0 },
-    over: false, ver: 0, cache: Array(NL).fill(null),
-    stats: { divCalls: 0, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0 },
+    over: false, ver: 0, cache: Array(NL).fill(null), dead: Array(NL).fill(false),
+    stats: { divCalls: 0, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0 },
   };
   for (let i = 0; i < S.players; i++) {
     const p = { id: i, cash: S.startCash + (S.seatCash ? S.seatCash * i : 0), hand: Array(NL).fill(0), shares: Array(NL).fill(0), divIncome: 0, spent: 0 };
@@ -194,11 +202,11 @@ export function canDo(g, a) {
     }
     case "draw": return true;
     case "invest": {
-      if (sharesLeft(g, a.l) <= 0 || p.cash < priceOf(g, a.l)) return false;
+      if (g.dead[a.l] || sharesLeft(g, a.l) <= 0 || p.cash < priceOf(g, a.l)) return false;
       if (a.wild) return handSize(p) >= S.wildCost;
       return p.hand[a.l] >= 1;
     }
-    case "div": return !T.usedSlot;
+    case "div": return !T.usedSlot && (!S.divOne || (a.l !== undefined && !g.dead[a.l]));
   }
   return false;
 }
@@ -211,12 +219,14 @@ export function apply(g, a) {
       const need = trackNeed(a.l, a);
       need.forEach((n, c) => { p.hand[c] -= n; g.bag[c] += n; });
       g.track.set(a.k, a.l); touch(g); syncMarkers(g);
+      if (S.merges) checkMerges(g, a.l);
       T.ap -= 1; break;
     }
     case "station": {
       const c = stationCost(g, a.h), burn = Math.min(c, burnCount(g, c));
       p.hand[a.l] -= c; g.burned += burn; g.bag[a.l] += c - burn;
       g.stations.set(a.h, a.l); touch(g); syncMarkers(g);
+      if (S.merges) checkMerges(g, a.l);
       T.ap -= 1; break;
     }
     case "draw": {
@@ -241,7 +251,7 @@ export function apply(g, a) {
       T.invests++; break;
     }
     case "div": {
-      const ps = []; for (let l = 0; l < NL; l++) ps.push(perShare(g, l));
+      const ps = []; for (let l = 0; l < NL; l++) ps.push(S.divOne && l !== a.l ? 0 : perShare(g, l));
       g.players.forEach((q) => { let paid = 0; for (let l = 0; l < NL; l++) paid += q.shares[l] * ps[l]; q.cash += paid; q.divIncome += paid; g.stats.divPaid += paid; });
       for (let l = 0; l < NL; l++) g.prices[l] += Math.round(ps[l] * S.priceGrowth);
       g.stats.divCalls++;
@@ -249,6 +259,64 @@ export function apply(g, a) {
     }
     case "end": endTurn(g); return;
   }
+}
+
+/* does line l touch another live line that is also big enough? merge until nothing qualifies */
+export function checkMerges(g, l) {
+  for (let guard = 0; guard < NL; guard++) {
+    let pair = null;
+    for (let a = 0; a < NL && !pair; a++) {
+      if (g.dead[a] || line(g, a).stations < g.S.mergeAt) continue;
+      for (let b = a + 1; b < NL; b++) {
+        if (g.dead[b] || line(g, b).stations < g.S.mergeAt) continue;
+        const na = line(g, a).net, nb = line(g, b).net;
+        let touchHex = false; for (const h of na) if (nb.has(h)) { touchHex = true; break; }
+        if (touchHex && g.S.safeAt && line(g, a).stations >= g.S.safeAt && line(g, b).stations >= g.S.safeAt) continue;
+        if (touchHex) { pair = [a, b]; break; }
+      }
+    }
+    if (!pair) return;
+    const [a, b] = pair, A = line(g, a), B = line(g, b);
+    const big = A.stations !== B.stations ? (A.stations > B.stations ? a : b)
+              : A.edges.length !== B.edges.length ? (A.edges.length > B.edges.length ? a : b)
+              : (a === l ? a : b === l ? b : a);
+    merge(g, big, big === a ? b : a);
+  }
+}
+export function merge(g, A, D) {
+  const S = g.S, P = g.prices[D];
+  // Acquire-style bonuses to the absorbed line's holders
+  const hold = g.players.map((p) => p.shares[D]);
+  const top = Math.max(...hold);
+  if (top > 0) {
+    const firsts = hold.map((h, i) => (h === top ? i : -1)).filter((i) => i >= 0);
+    const pay = (i, amt) => { g.players[i].cash += amt; g.stats.mergeBonus += amt; };
+    if (firsts.length > 1) firsts.forEach((i) => pay(i, Math.round((S.majBonus + S.minBonus) * P / firsts.length)));
+    else {
+      pay(firsts[0], S.majBonus * P);
+      const rest = hold.map((h, i) => (i === firsts[0] ? -1 : h)), sec = Math.max(...rest);
+      if (sec > 0) { const secs = rest.map((h, i) => (h === sec ? i : -1)).filter((i) => i >= 0); secs.forEach((i) => pay(i, Math.round(S.minBonus * P / secs.length))); }
+      else pay(firsts[0], S.minBonus * P);
+    }
+  }
+  g.players.forEach((p) => { p.cash += p.shares[D] * P; p.shares[D] = 0; p.hand[A] += p.hand[D]; p.hand[D] = 0; });
+  for (const [k, o] of g.track) if (o === D) g.track.set(k, A);
+  for (const [h, o] of g.stations) if (o === D) g.stations.set(h, A);
+  g.bag[A] += g.bag[D]; g.bag[D] = 0; g.onboard[A] += g.onboard[D]; g.onboard[D] = 0;
+  g.sold[D] = 0; g.dead[D] = true;
+  g.stats.mergers.push({ round: g.turn.round, A, D, by: g.turn.active });
+  touch(g);
+}
+
+/* an independent copy for lookahead (fresh random stream; history not carried) */
+export function cloneGame(g) {
+  return {
+    S: g.S, R: rng(Math.floor(g.R() * 4294967296)), seed: g.seed,
+    track: new Map(g.track), stations: new Map(g.stations), bag: [...g.bag], burned: g.burned, onboard: [...g.onboard],
+    players: g.players.map((p) => ({ ...p, hand: [...p.hand], shares: [...p.shares] })), prices: [...g.prices], sold: [...g.sold],
+    turn: { ...g.turn }, over: g.over, ver: g.ver, cache: Array(NL).fill(null), dead: [...g.dead],
+    stats: { divCalls: g.stats.divCalls, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0 },
+  };
 }
 
 export function endTurn(g) {

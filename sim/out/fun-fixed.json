@@ -1,0 +1,58 @@
+{
+ "fixed": {
+  "label": "Today's rules, seat-fixed",
+  "settings": {
+   "scoring": "base",
+   "investPerTurn": 2,
+   "snake": true
+  },
+  "theta": {
+   "phi": 0.8732954949263949,
+   "wDisc": 0.623168775642989,
+   "wPot": 6.370714593783488,
+   "lambda": 0.9398313786485233,
+   "noise": 2.3402403693311498
+  },
+  "games": 800,
+  "seats": [
+   0.3025,
+   0.3575,
+   0.34
+  ],
+  "leadChanges": 3.46375,
+  "lockRound": 6.57875,
+  "margin": 0.11465892597968069,
+  "winnerAheadR5": 0.71,
+  "winnerAheadR10": 0.87125,
+  "mergers": 0,
+  "gamesWithMerge": 0,
+  "firstMergeRound": 0,
+  "mergeBonusShare": 0,
+  "divShare": 0.560162923134354,
+  "contested": 6.265,
+  "cos": 0.5406819649643165,
+  "stations": 35.22375,
+  "track": 78.43875,
+  "divCalls": 13.9225,
+  "lookaheadWin": 0.6275,
+  "lookaheadSE": 0.02417352632530058,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.30375,
+   0.42875,
+   0.6575,
+   0.77375,
+   0.71,
+   0.7375,
+   0.76875,
+   0.83,
+   0.82625,
+   0.87125,
+   0.86,
+   0.90125,
+   0.90125,
+   0.94125,
+   1
+  ]
+ }
+}

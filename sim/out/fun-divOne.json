@@ -1,0 +1,59 @@
+{
+ "divOne": {
+  "label": "+ caller picks the line that pays",
+  "settings": {
+   "scoring": "base",
+   "investPerTurn": 2,
+   "snake": true,
+   "divOne": true
+  },
+  "theta": {
+   "phi": 1.139515141974902,
+   "wDisc": 0.2453538028348704,
+   "wPot": 5.31750135786133,
+   "lambda": 0.9949669412127696,
+   "noise": 2.0747508106738675
+  },
+  "games": 800,
+  "seats": [
+   0.32604166666666673,
+   0.3679166666666667,
+   0.30604166666666666
+  ],
+  "leadChanges": 2.88875,
+  "lockRound": 8.1425,
+  "margin": 0.18373493975903615,
+  "winnerAheadR5": 0.68625,
+  "winnerAheadR10": 0.77375,
+  "mergers": 0,
+  "gamesWithMerge": 0,
+  "firstMergeRound": 0,
+  "mergeBonusShare": 0,
+  "divShare": 0.5107718701155141,
+  "contested": 4.48625,
+  "cos": 0.4713563456045415,
+  "stations": 27.7375,
+  "track": 86.52125,
+  "divCalls": 32.57625,
+  "lookaheadWin": 0.50875,
+  "lookaheadSE": 0.024996171581864294,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.32875,
+   0.425,
+   0.6775,
+   0.67625,
+   0.68625,
+   0.6925,
+   0.69625,
+   0.75,
+   0.765,
+   0.77375,
+   0.80375,
+   0.7775,
+   0.7875,
+   0.88625,
+   1
+  ]
+ }
+}

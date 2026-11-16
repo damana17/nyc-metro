@@ -27,9 +27,10 @@ function project(g) {
   const S = g.S, NL = E.NL;
   const D = [], room = [], T = [];
   for (let l = 0; l < NL; l++) {
-    D.push(E.perShare(g, l));
-    room.push(Math.min(E.line(g, l).sites, 4));
-    T.push(E.shareValue(g, l));
+    const dead = g.dead && g.dead[l];
+    D.push(dead ? 0 : E.perShare(g, l));
+    room.push(dead ? 0 : Math.min(E.line(g, l).sites, 4));
+    T.push(dead ? 0 : E.shareValue(g, l));
   }
   const players = g.players.map((p) => ({ cash: p.cash, hand: E.handSize(p), shares: [...p.shares] }));
   const totalTurns = S.roundLimit * g.players.length;
@@ -74,6 +75,10 @@ function candidates(g, th, allow) {
   const S = g.S, p = E.cur(g), me = g.turn.active, base = project(g), out = [];
   const ok = (t) => !allow || allow.includes(t);
   const push = (act, mutate) => { if (!E.canDo(g, act)) return; const a = copy(base); mutate(a); out.push({ act, a }); };
+  /* a move that could set off a merge is played out on a copy, so the bonuses and sell-off are counted exactly */
+  const real = (act) => { if (!E.canDo(g, act)) return; const g2 = E.cloneGame(g); E.apply(g2, act); out.push({ act, a: project(g2) }); };
+  const big = (l) => !g.dead[l] && E.line(g, l).stations >= S.mergeAt - 1;
+  const touches = (l, h) => { for (let m = 0; m < E.NL; m++) if (m !== l && !g.dead[m] && E.line(g, m).net.has(h)) return true; return false; };
   const mtm = S.scoring === "mtm";
 
   if (ok("track")) for (let l = 0; l < E.NL; l++) {
@@ -82,6 +87,7 @@ function candidates(g, th, allow) {
     for (const o of E.legalTrack(g, l)) {
       const need = E.trackNeed(l, o); if (!E.canPayArr(p, need)) continue;
       const cost = need.reduce((x, y) => x + y, 0);
+      if (S.merges && big(l) && touches(l, o.to)) { real({ t: "track", l, ...o }); continue; }
       push({ t: "track", l, ...o }, (a) => {
         a.players[me].hand -= cost;
         if (!L.net.has(o.to)) {
@@ -94,6 +100,7 @@ function candidates(g, th, allow) {
   if (ok("station")) for (let l = 0; l < E.NL; l++) {
     const L = E.line(g, l); let best = null;
     for (const h of L.net) { if (g.stations.has(h)) continue; const c = E.stationCost(g, h); if (c <= p.hand[l] && (!best || c < best.c || (c === best.c && g.R() < 0.5))) best = { h, c }; }
+    if (best && S.merges && big(l) && [...L.net].some((h) => touches(l, h))) { real({ t: "station", l, h: best.h }); continue; }
     if (best) push({ t: "station", l, h: best.h }, (a) => { a.players[me].hand -= best.c; a.D[l] += S.perStation; a.room[l] = Math.min(Math.max(0, L.sites - 1), 4); });
   }
   if (ok("draw")) {
@@ -108,7 +115,14 @@ function candidates(g, th, allow) {
       a.sold[l]++; if (mtm) a.T[l] += S.stepPerShare;
     });
   }
-  if (ok("div")) push({ t: "div" }, (a) => {
+  if (ok("div") && S.divOne) for (let l = 0; l < E.NL; l++) {
+    if (g.dead[l] || !base.D[l]) continue;
+    push({ t: "div", l }, (a) => {
+      a.players.forEach((q) => { q.cash += q.shares[l] * a.D[l]; });
+      const rise = Math.round(a.D[l] * S.priceGrowth); a.prices[l] += rise; if (S.scoring !== "cash") a.T[l] += rise;
+    });
+  }
+  if (ok("div") && !S.divOne) push({ t: "div" }, (a) => {
     const g1 = S.scoring === "cash" ? 0 : S.priceGrowth;
     a.players.forEach((q) => { for (let l = 0; l < E.NL; l++) q.cash += q.shares[l] * a.D[l]; });
     for (let l = 0; l < E.NL; l++) { const rise = Math.round(a.D[l] * S.priceGrowth); a.prices[l] += rise; if (S.scoring !== "cash") a.T[l] += rise; }
@@ -131,6 +145,32 @@ export function greedyStep(g, th, allow) {
   return true;
 }
 
+/* Turn-ahead bot: takes the greedy bot's top K moves, and for each plays out the rest of its own turn
+   and every rival's next turn (all greedy), then picks the move whose result is best for it. */
+export function lookaheadStep(g, th, oppTh, K = 4) {
+  const me = g.turn.active;
+  const { base, out } = candidates(g, th);
+  const v0 = objective(g, base, me, th);
+  const scored = out.map((c) => ({ c, v: objective(g, c.a, me, th) - v0 })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, K);
+  if (!scored.length) { E.apply(g, { t: "end" }); return false; }
+  let best = null, bestV = -Infinity;
+  for (const { c } of scored) {
+    const g2 = E.cloneGame(g);
+    E.apply(g2, c.act);
+    let guard = 0;
+    while (!g2.over && g2.turn.active === me && guard++ < 30) if (!greedyStep(g2, th)) break;
+    for (let k = 0; k < g2.players.length - 1 && !g2.over; k++) {
+      const who = g2.turn.active, start = g2.turn.n; guard = 0;
+      while (!g2.over && g2.turn.n === start && guard++ < 30) if (!greedyStep(g2, oppTh)) break;
+      if (!g2.over && g2.turn.n === start) E.apply(g2, { t: "end" });
+    }
+    const v = objective(g2, project(g2), me, th);
+    if (v > bestV) { bestV = v; best = c; }
+  }
+  E.apply(g, best.act);
+  return true;
+}
+
 export function randomStep(g) {
   const p = E.cur(g), acts = [];
   for (let l = 0; l < E.NL; l++) {
@@ -149,7 +189,7 @@ export function playTurn(g, bot) {
   const startTurn = g.turn.n;
   let guard = 0;
   while (!g.over && g.turn.n === startTurn && guard++ < 40) {
-    const more = bot.kind === "random" ? randomStep(g) : greedyStep(g, bot.theta, bot.allow);
+    const more = bot.kind === "random" ? randomStep(g) : bot.kind === "lookahead" ? lookaheadStep(g, bot.theta, bot.oppTheta || bot.theta, bot.K || 4) : greedyStep(g, bot.theta, bot.allow);
     if (!more) break;
   }
   if (!g.over && g.turn.n === startTurn) E.apply(g, { t: "end" });

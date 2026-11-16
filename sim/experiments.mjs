@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import * as E from "./engine.mjs";
 import { playGame } from "./bots.mjs";
+import { VARIANTS } from "./variants.mjs";
 
 const TH = JSON.parse(fs.readFileSync("sim/out/theta.json"));
 const theta = (scoring) => (TH[scoring] || TH.mtm).theta;
@@ -51,6 +52,8 @@ function measure(g) {
     stations: lines.reduce((a, x) => a + x.st, 0), track: lines.reduce((a, x) => a + x.tr, 0), zonesCovered: new Set(lines.flatMap((x, l) => [...E.line(g, l).zones])).size,
     bagEnd: g.bag.reduce((a, b) => a + b, 0), burned: g.burned, handCapped: g.stats.handCapped, drawShort: g.stats.drawShort,
     traj: H.map((h) => h.scores),
+    mergers: g.stats.mergers.length, mergeRounds: g.stats.mergers.map((m) => m.round), mergeBonus: g.stats.mergeBonus,
+    contested: lines.filter((x) => x.owners >= 2).length,
   };
 }
 
@@ -185,6 +188,35 @@ const exps = {
                  leadChanges: s.leadChanges, lockRound: s.lockRound, margin: s.margin.p50, stations: s.stations, shares: s.wealth.shares, cos: s.portfolioCos };
       });
       process.stdout.write(`seatfix2 ${scoring} done\n`);
+    }
+    return out;
+  },
+
+  /* what merges and owned dividends do to the feel of the game */
+  fun(N, only) {
+    const out = {};
+    for (const [v, { label, settings }] of Object.entries(VARIANTS).filter(([k]) => !only || k === only)) {
+      const th = JSON.parse(fs.readFileSync(`sim/out/theta-${v}.json`)).theta;
+      const greedy = { name: "greedy", kind: "greedy", theta: th };
+      const { ms, names } = run(settings, () => [greedy, greedy, greedy], N, 600000);
+      const s = summarize(ms, names);
+      const lead = (r) => mean(ms.map((m) => { const x = m.traj[r - 1]; return x && x.indexOf(Math.max(...x)) === m.winners[0] ? 1 : 0; }));
+      const look = { name: "lookahead", kind: "lookahead", theta: th, oppTheta: th, K: 4 };
+      const L = run(settings, (i) => { const t = [look, greedy, greedy]; const k = i % 3; return [t[k], t[(k + 1) % 3], t[(k + 2) % 3]]; }, Math.round(N / 2), 700000);
+      const sl = summarize(L.ms, L.names);
+      out[v] = {
+        label, settings, theta: th, games: N,
+        seats: s.winBySeat, leadChanges: s.leadChanges, lockRound: s.lockRound, margin: s.margin.p50,
+        winnerAheadR5: lead(5), winnerAheadR10: lead(10),
+        mergers: mean(ms.map((m) => m.mergers)), gamesWithMerge: mean(ms.map((m) => (m.mergers ? 1 : 0))),
+        firstMergeRound: mean(ms.filter((m) => m.mergers).map((m) => m.mergeRounds[0])),
+        mergeBonusShare: mean(ms.map((m) => m.mergeBonus)) / Math.max(1, s.score.mean * 3),
+        divShare: s.wealth.div / Math.max(1, s.score.mean), contested: mean(ms.map((m) => m.contested)), cos: s.portfolioCos,
+        stations: s.stations, track: s.track, divCalls: s.divCalls,
+        lookaheadWin: sl.winRate.lookahead.rate, lookaheadSE: sl.winRate.lookahead.se, lookaheadGames: L.ms.length,
+        winnerLeading: Array.from({ length: 15 }, (_, r) => lead(r + 1)),
+      };
+      process.stdout.write(`fun ${v} done\n`);
     }
     return out;
   },
