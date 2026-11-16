@@ -1,0 +1,279 @@
+<meta name="dash-one-writer">
+<style>
+  .nm { --nm-ink: var(--color-fg); --nm-mute: var(--color-fg-muted); max-width: 920px; font-family: var(--font-anthropic-sans); color: var(--color-fg); }
+  .nm h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0 0 var(--cds-gap-sm); text-wrap: balance; }
+  .nm h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: var(--cds-gap-xl) 0 var(--cds-gap-xs); text-wrap: balance; }
+  .nm p { line-height: 1.55; margin: 0 0 var(--cds-gap-md); max-width: 68ch; }
+  .nm .lede { font-size: var(--cds-font-size-heading); line-height: 1.45; }
+  .nm .muted { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .nm .num { font-variant-numeric: tabular-nums; font-weight: var(--cds-font-weight-medium); }
+  .nm .card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); margin: var(--cds-gap-md) 0; }
+  .nm .chart { position: relative; min-height: 240px; }
+  .nm .chart svg { display: block; width: 100%; overflow: visible; }
+  .nm .chart text { fill: var(--cds-text-secondary); font-size: 12px; font-family: var(--font-anthropic-sans); }
+  .nm .chart .lbl { fill: var(--color-fg); }
+  .nm .tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); box-shadow: var(--cds-shadow-popover); border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: nowrap; z-index: 2; }
+  .nm .legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); margin-bottom: var(--cds-gap-sm); }
+  .nm .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--sw); }
+  .nm .wrap { overflow-x: auto; }
+  .nm table { border-collapse: collapse; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; width: 100%; }
+  .nm th, .nm td { padding: 6px 10px; border-bottom: 1px solid var(--color-border-line); text-align: right; white-space: nowrap; }
+  .nm th { color: var(--color-fg-muted); font-weight: var(--cds-font-weight-medium); }
+  .nm th:first-child, .nm td:first-child { text-align: left; }
+  .nm ol.recs { padding-left: 1.3em; line-height: 1.55; max-width: 70ch; }
+  .nm ol.recs li { margin-bottom: var(--cds-gap-sm); }
+  .nm .seg { display: inline-flex; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); overflow: hidden; margin-bottom: var(--cds-gap-sm); }
+  .nm .seg button { font: inherit; font-size: var(--cds-font-size-caption); padding: 4px 10px; border: 0; background: transparent; color: var(--color-fg-muted); cursor: pointer; }
+  .nm .seg button[aria-pressed="true"] { background: var(--color-fg); color: var(--color-bg); }
+  .nm details summary { cursor: pointer; font-weight: var(--cds-font-weight-medium); }
+</style>
+
+<div class="nm" data-read lang="en">
+  <h1 id="title">NYC Metro: what 120,000 simulated games say</h1>
+  <p class="lede">Turn order decides the Influence game: the first player wins <span class="num" data-draw="val" data-source="seats" data-field="win" data-where="ruleKey=base&amp;seatNo=1" data-fmt="pct">—</span> of games where a fair share is 33%. The app&rsquo;s Tally also lets you score by buying shares in a dead line. Both are fixable.</p>
+  <p class="muted">Influence (V2) with the app&rsquo;s own rules and map, 3 players and 15 rounds unless stated. Bots were tuned by self-play under each scoring rule. Every chart reads the attached result files, so Sources shows the run behind each number.</p>
+
+  <h2 id="h-seats">1. The first seat wins most games, whatever the scoring</h2>
+  <p>Each dot is the share of 1,000 games won from that seat. Fair is one in three.</p>
+  <div class="card">
+    <div class="legend"><span data-c="0">Seat 1</span><span data-c="1">Seat 2</span><span data-c="2">Seat 3</span></div>
+    <div class="chart" id="c-seats" data-draw="seats" data-source="seats"></div>
+  </div>
+  <p>It gets worse with more players. With 4 the last seat won <span class="num" data-draw="val" data-source="knobs" data-field="lastSeat" data-where="ruleKey=base&amp;knob=players&amp;value=4" data-fmt="pct">—</span> of games, and with 5 <span class="num" data-draw="val" data-source="knobs" data-field="lastSeat" data-where="ruleKey=base&amp;knob=players&amp;value=5" data-fmt="pct">—</span>.</p>
+
+  <h2 id="h-why">2. Why: the first buyer gets the cheap shares</h2>
+  <p>Every share sold raises that line&rsquo;s price by $15, and a share pays the same dividend whatever you paid for it. Seat 1 opens by buying three lines at $10 each. Later seats pay $25 to $55 for theirs, and the gap compounds through 20-odd dividend calls. Take the step away and the edge flips to the later seats, so the step is the lever. Smaller steps do not help: the advantage holds until the step is zero.</p>
+  <div class="card">
+    <div class="seg" role="group" aria-label="Scoring rule for the step chart"><button type="button" data-step-rule="base" aria-pressed="true">Base price</button><button type="button" data-step-rule="cash" aria-pressed="false">Cash only</button></div>
+    <div class="legend"><span data-c="0">Seat 1 wins</span><span data-c="2">Seat 3 wins</span></div>
+    <div class="chart" id="c-step" data-draw="step" data-source="knobs"></div>
+  </div>
+
+  <h2 id="h-fixes">3. Fixes tried for the seat problem</h2>
+  <p>Win rate by seat, 3 players, sorted from fairest to least fair. The combinations were run with 1,000 games each, the single changes with 600.</p>
+  <div class="card">
+    <div class="seg" role="group" aria-label="Scoring rule for the fixes chart"><button type="button" data-fix-rule="base" aria-pressed="true">Base price</button><button type="button" data-fix-rule="cash" aria-pressed="false">Cash only</button></div>
+    <div class="legend"><span data-c="0">Seat 1</span><span data-c="1">Seat 2</span><span data-c="2">Seat 3</span></div>
+    <div class="chart" id="c-fixes" data-draw="fixes" data-source="fixes"></div>
+  </div>
+  <p>No single change fixes it, but two together do. Under base-price scoring the fairest was <b data-draw="bestFix" data-rule="base">—</b> (a <span class="num" data-draw="bestFixSpread" data-rule="base">—</span> gap between best and worst seat). Under cash-only scoring it was <b data-draw="bestFix" data-rule="cash">—</b> (<span class="num" data-draw="bestFixSpread" data-rule="cash">—</span>). Both limit how many shares a turn can buy and move who goes first. Some combinations overshoot: snake order with a flat round-1 price hands the game to the last seat, which means the balance point is reachable.</p>
+  <p>Four players is harder. The best tested option there still left a <span class="num" data-draw="best4" data-rule="cash">—</span> gap, and the last seat stays weakest. A 4-player opening needs its own testing.</p>
+
+  <h2 id="h-tally">4. The Tally rewards buying shares in a dead line</h2>
+  <p>The app&rsquo;s Tally values each share at the current price, and the price rises with every purchase. Buying a share therefore raises the value of every share you already hold. One player buying eight shares of a line that never pays a dividend gains <span class="num" data-draw="val" data-source="tally" data-field="change" data-where="rule=Tally (price ladder)&amp;shares=8" data-fmt="usd">—</span> on the Tally. Valued at the base price, the same purchases cost <span class="num" data-draw="val" data-source="tally" data-field="change" data-where="rule=Base price&amp;shares=8" data-fmt="usdabs">—</span>.</p>
+  <div class="card">
+    <div class="legend"><span data-c="0">Tally (price ladder)</span><span data-c="1">Base price</span></div>
+    <div class="chart" id="c-tally" data-draw="tally" data-source="tally"></div>
+  </div>
+  <p>Under the Tally, <span class="num" data-draw="val" data-source="shape" data-field="ladderShare" data-where="ruleKey=mtm" data-fmt="pct">—</span> of an average final score is this ladder premium rather than cash or dividends.</p>
+
+  <h2 id="h-shape">5. The scoring rule decides how early the game is settled</h2>
+  <p>Share of games in which the eventual winner was already ahead at the end of each round. A line that reaches the top early is a game nobody can come back in.</p>
+  <div class="card">
+    <div class="legend"><span data-c="0">Tally (price ladder)</span><span data-c="1">Base price</span><span data-c="2">Cash only</span><span data-c="3">Majority bonuses</span></div>
+    <div class="chart" id="c-leading" data-draw="leading" data-source="leading"></div>
+  </div>
+  <div class="card wrap">
+    <table id="t-shape" data-source="shape" data-row-key="ruleKey">
+      <thead><tr><th data-field="rule">Final score counts</th><th data-field="leadChanges">Lead changes</th><th data-field="lockRound">Winner ahead for good from round</th><th data-field="margin">Winning margin</th><th data-field="divCalls">Dividend calls</th><th data-field="stations">Stations built</th><th data-field="shares">Shares per player</th></tr></thead>
+      <tbody data-draw="shapeRows"></tbody>
+    </table>
+  </div>
+  <p>Cash-only scoring keeps the lead moving until about round 10, because buying a share costs score until it pays back. But it is still decided by seat, so the tension is partly an accounting effect. Base-price scoring gives the most building, with the winner usually ahead by round 3.</p>
+
+  <h2 id="h-arch">6. Building matters; calling dividends does not</h2>
+  <p>One single-minded bot against two tuned bots, seats rotated. A fair result is 33%.</p>
+  <div class="card wrap">
+    <table id="t-arch">
+      <thead><tr><th>Strategy</th><th>Tally</th><th>Base price</th><th>Cash only</th><th>Majority bonuses</th></tr></thead>
+      <tbody data-draw="archRows" data-source="archetypes"></tbody>
+    </table>
+  </div>
+  <p>A player who never lays track or builds stations almost never wins, so the neutral lines do not invite free-riding. Never calling dividends costs nothing under most rules, because rivals call them anyway and the payout reaches everyone. That makes the dividend call a weak decision, except under cash-only scoring.</p>
+
+  <h2 id="h-knobs">7. What the other settings do</h2>
+  <p>One setting changed at a time from the app&rsquo;s defaults, base-price scoring, 300 games each.</p>
+  <div class="card wrap">
+    <select class="dash-select" id="knob-rule" aria-label="Scoring rule for the settings table"><option value="base">Base-price scoring</option><option value="cash">Cash-only scoring</option></select>
+    <table id="t-knobs" data-source="knobs" data-row-key="ruleKey,knob,value">
+      <thead><tr><th data-field="knob">Setting</th><th data-field="value">Value</th><th data-field="firstSeat">Seat 1 wins</th><th data-field="stations">Stations</th><th data-field="track">Track</th><th data-field="zones">Zones reached</th><th data-field="divCalls">Dividend calls</th><th data-field="leadChanges">Lead changes</th><th data-field="similarity">Portfolio overlap</th><th data-field="neverBuilds">Never-builds bot wins</th></tr></thead>
+      <tbody data-draw="knobRows"></tbody>
+    </table>
+  </div>
+  <p>Settings that barely matter: draw size (the 10-disc hand limit binds first), the crossing rule (lines rarely meet) and action points from 4 to 6. Station base mostly sets how many stations get built. At the app&rsquo;s default of 3, half the board starts with free stations. At 5, the &ldquo;5 minus distance&rdquo; of the design notes, about half as many are built.</p>
+
+  <h2 id="h-recs">Recommendations</h2>
+  <ol class="recs">
+    <li><b>Change the final score before the next playtest.</b> Value shares at the base price, which is the price without the per-sale step, or use majority/minority bonuses on that base price. Do not use the Tally&rsquo;s ladder value: it pays players for buying anything.</li>
+    <li><b>Fix the opening.</b> Limit shares per turn to one or two and move the start player each round (snake order or rotation). In simulation that took the first seat from about 80% of wins to about a third at 3 players. Play-test it, and test 4 players separately.</li>
+    <li><b>Give the dividend call a cost or an owner.</b> Today it is a free action that helps everyone. Options: the caller gets a bonus, only the caller&rsquo;s lines pay, or calling costs the whole turn.</li>
+    <li><b>Decide the station base.</b> The app uses 3, the design notes say 5. Five builds about half the stations and leaves more discs in the bag.</li>
+    <li><b>Drop or rework settings that do nothing.</b> Draw size and crossing cost change little while the hand limit is 10 and lines rarely cross.</li>
+  </ol>
+
+  <details>
+    <summary>How the simulation works, and its limits</summary>
+    <p>The engine re-implements the app&rsquo;s rules mode and imports the app&rsquo;s map, zones and geometry. It was checked against the app&rsquo;s own functions on 869,659 positions with no differences. Where the app leaves a rule to the table, the engine assumes: action points spent automatically; investing (up to 3 shares) and calling dividends share one slot per turn; the game ends after 15 rounds. Merges are not simulated because the app does not implement them.</p>
+    <p>The bots are greedy: each action point they take the move that most improves a projection of their final standing against the table. Five weights in that projection were tuned by self-play separately for each scoring rule. Tuned bots beat random play every time. They do not plan several turns ahead, bluff, or negotiate, and they all think alike, which can exaggerate an edge that a varied human table would blunt. Treat the sizes of effects as indicative and the directions as solid.</p>
+  </details>
+</div>
+
+<script>
+  window.NM = window.NM || {};
+  NM.fmt = { pct: (v) => d3.format(".0%")(v), usd: (v) => (v < 0 ? "−$" : "+$") + d3.format(",")(Math.abs(v)), usdabs: (v) => "$" + d3.format(",")(Math.abs(v)), num: (v) => d3.format(",.1f")(v) };
+  NM.rules = [["mtm", "Tally (price ladder)"], ["base", "Base price"], ["cash", "Cash only"], ["acq", "Majority bonuses"]];
+  NM.state = { stepRule: "base", knobRule: "base", fixRule: "base" };
+  NM.match = (row, where) => where.split("&").every((p) => { const [k, v] = p.split("=").map(decodeURIComponent); return String(row[k]) === v; });
+  NM.tip = (box) => { let t = box.querySelector(".tip"); if (!t) { t = document.createElement("div"); t.className = "tip"; t.hidden = true; box.appendChild(t); } return t; };
+  NM.showTip = (box, tip, ev, text) => { const r = box.getBoundingClientRect(); tip.textContent = text; tip.hidden = false;
+    const x = Math.min(ev.clientX - r.left + 10, r.width - tip.offsetWidth - 4); tip.style.left = Math.max(0, x) + "px"; tip.style.top = (ev.clientY - r.top - 34) + "px"; };
+  document.querySelectorAll(".nm .legend span[data-c]").forEach((s) => s.style.setProperty("--sw", dash.colors[+s.dataset.c]));
+  NM.status = (el, ...ids) => { for (const id of ids) { const d = dash.data(id); if (d.status !== "ok") { el.textContent = d.status === "error" ? "Failed to load" : "—"; return false; } } return true; };
+</script>
+
+<script>
+  /* single values inside sentences: each element names its own source, field and row */
+  dash.draw("val", (el) => {
+    const d = dash.data(el.dataset.source);
+    if (d.status !== "ok") { el.textContent = "—"; return; }
+    const row = d.data.find((r) => NM.match(r, el.dataset.where));
+    el.textContent = row ? (NM.fmt[el.dataset.fmt] || String)(row[el.dataset.field]) : "—";
+  });
+</script>
+
+<script>
+  /* a horizontal dot plot: one row per label, one dot per seat, with a fair-share line */
+  NM.dotRows = (el, rows, opts) => {
+    el.replaceChildren();
+    const W = el.clientWidth || 600, labW = Math.min(opts.labW || 200, W * 0.42), rowH = 30, top = 22, H = top + rows.length * rowH + 8;
+    const x = d3.scaleLinear().domain([0, 1]).range([labW + 8, W - 12]);
+    const svg = d3.select(el).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("role", "img").attr("aria-label", opts.aria);
+    svg.append("g").attr("transform", `translate(0,${top - 6})`).call(d3.axisTop(x).ticks(W < 500 ? 3 : 5).tickFormat(d3.format(".0%")).tickSize(-(H - top))).call((g) => { g.select(".domain").remove(); g.selectAll("line").style("stroke", "var(--cds-chart-grid)"); });
+    svg.append("line").attr("x1", x(opts.fair)).attr("x2", x(opts.fair)).attr("y1", top - 6).attr("y2", H - 4).style("stroke", "var(--cds-chart-reference)").style("stroke-dasharray", "4 3");
+    const tip = NM.tip(el);
+    rows.forEach((r, i) => {
+      const y = top + i * rowH + rowH / 2;
+      svg.append("text").attr("class", "lbl").attr("x", 0).attr("y", y + 4).text(r.label.length > 34 && W < 520 ? r.label.slice(0, 32) + "…" : r.label);
+      const vs = r.values;
+      svg.append("line").attr("x1", x(d3.min(vs))).attr("x2", x(d3.max(vs))).attr("y1", y).attr("y2", y).style("stroke", "var(--cds-chart-muted)").style("stroke-width", 2);
+      vs.forEach((v, s) => svg.append("circle").attr("cx", x(v)).attr("cy", y).attr("r", 6).style("fill", dash.colors[s]).style("stroke", "var(--color-bg)").style("stroke-width", 1.5)
+        .on("pointermove", (ev) => NM.showTip(el, tip, ev, `${r.label} · Seat ${s + 1}: ${d3.format(".0%")(v)}`)).on("pointerleave", () => { tip.hidden = true; }));
+    });
+    el.appendChild(tip);
+  };
+
+  dash.draw("seats", (el) => {
+    if (!NM.status(el, "seats")) return;
+    const rows = dash.data("seats").data;
+    NM.dotRows(el, NM.rules.map(([k, label]) => ({ label, values: [1, 2, 3].map((s) => +rows.find((r) => r.ruleKey === k && +r.seatNo === s).win) })),
+      { fair: 1 / 3, labW: 170, aria: "Win rate by seat for each scoring rule; seat 1 wins about 80% under every rule" });
+  });
+
+  dash.draw("fixes", (el) => {
+    if (!NM.status(el, "fixes")) return;
+    const rows = dash.data("fixes").data.filter((r) => r.ruleKey === NM.state.fixRule).sort((a, b) => a.spread - b.spread);
+    NM.dotRows(el, rows.map((r) => ({ label: r.fix, values: [+r.seat1, +r.seat2, +r.seat3] })), { fair: 1 / 3, labW: 260, aria: "Win rate by seat for each rule change tried, fairest first" });
+  });
+  NM.best = (rule) => { const d = dash.data("fixes"); return d.status === "ok" ? d.data.filter((r) => r.ruleKey === rule).sort((a, b) => a.spread - b.spread)[0] : null; };
+  dash.draw("bestFix", (el) => { const b = NM.best(el.dataset.rule); el.textContent = b ? b.fix.toLowerCase() : "—"; });
+  dash.draw("bestFixSpread", (el) => { const b = NM.best(el.dataset.rule); el.textContent = b ? d3.format(".0f")(b.spread * 100) + "-point" : "—"; });
+  dash.draw("best4", (el) => { const d = dash.data("fixes"); if (d.status !== "ok") { el.textContent = "—"; return; }
+    const m = d3.min(d.data.filter((r) => r.spread4 !== undefined && r.spread4 !== null && r.spread4 !== ""), (r) => +r.spread4); el.textContent = m === undefined ? "—" : d3.format(".0f")(m * 100) + "-point"; });
+  document.querySelectorAll("[data-fix-rule]").forEach((b) => b.addEventListener("click", () => {
+    NM.state.fixRule = b.dataset.fixRule;
+    document.querySelectorAll("[data-fix-rule]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    dash.draw("fixes");
+  }));
+</script>
+
+<script>
+  /* a simple multi-line chart */
+  NM.lines = (el, series, opts) => {
+    el.replaceChildren();
+    const W = el.clientWidth || 600, H = opts.h || 240, m = { t: 10, r: 16, b: 34, l: 52 };
+    const all = series.flatMap((s) => s.points);
+    const x = (opts.xBand ? d3.scalePoint().domain(opts.xBand).padding(0.3) : d3.scaleLinear().domain(d3.extent(all, (p) => p.x))).range([m.l, W - m.r]);
+    const y = d3.scaleLinear().domain(opts.yDomain || d3.extent(all, (p) => p.y)).nice().range([H - m.b, m.t]);
+    const svg = d3.select(el).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("role", "img").attr("aria-label", opts.aria);
+    svg.append("g").attr("transform", `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(W < 500 ? 5 : 8).tickFormat(opts.xFmt || null)).call((g) => g.selectAll("line,path").style("stroke", "var(--cds-chart-axis)"));
+    svg.append("g").attr("transform", `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(opts.yFmt).tickSize(-(W - m.l - m.r))).call((g) => { g.select(".domain").remove(); g.selectAll("line").style("stroke", "var(--cds-chart-grid)"); });
+    if (opts.ref !== undefined) svg.append("line").attr("x1", m.l).attr("x2", W - m.r).attr("y1", y(opts.ref)).attr("y2", y(opts.ref)).style("stroke", "var(--cds-chart-reference)").style("stroke-dasharray", "4 3");
+    if (opts.xLabel) svg.append("text").attr("x", W - m.r).attr("y", H - 2).attr("text-anchor", "end").text(opts.xLabel);
+    const tip = NM.tip(el);
+    series.forEach((s, i) => {
+      const col = dash.colors[s.color ?? i];
+      svg.append("path").datum(s.points).attr("d", d3.line().x((p) => x(p.x)).y((p) => y(p.y))).style("fill", "none").style("stroke", col).style("stroke-width", 2.5);
+      svg.selectAll(null).data(s.points).join("circle").attr("cx", (p) => x(p.x)).attr("cy", (p) => y(p.y)).attr("r", 4).style("fill", col)
+        .on("pointermove", (ev, p) => NM.showTip(el, tip, ev, `${s.name} · ${opts.xName} ${p.x}: ${(opts.yFmt || String)(p.y)}`)).on("pointerleave", () => { tip.hidden = true; });
+    });
+    el.appendChild(tip);
+  };
+
+  document.querySelectorAll("[data-step-rule]").forEach((b) => b.addEventListener("click", () => {
+    NM.state.stepRule = b.dataset.stepRule;
+    document.querySelectorAll("[data-step-rule]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    dash.draw("step");
+  }));
+  dash.draw("step", (el) => {
+    if (!NM.status(el, "knobs")) return;
+    const rows = dash.data("knobs").data.filter((r) => r.ruleKey === NM.state.stepRule && r.knob === "stepPerShare");
+    NM.lines(el, [{ name: "Seat 1 wins", color: 0, points: rows.map((r) => ({ x: +r.value, y: +r.firstSeat })) }, { name: "Seat 3 wins", color: 2, points: rows.map((r) => ({ x: +r.value, y: +r.lastSeat })) }],
+      { yDomain: [0, 1], yFmt: d3.format(".0%"), ref: 1 / 3, xName: "step $", xFmt: (v) => "$" + v, xLabel: "price rise per share sold", aria: "First and last seat win rate against the price step; the first seat dominates at every step except zero" });
+  });
+
+  dash.draw("tally", (el) => {
+    if (!NM.status(el, "tally")) return;
+    const rows = dash.data("tally").data;
+    NM.lines(el, ["Tally (price ladder)", "Base price"].map((rule, i) => ({ name: rule, color: i, points: rows.filter((r) => r.rule === rule).map((r) => ({ x: +r.shares, y: +r.change })) })),
+      { yFmt: NM.fmt.usd, ref: 0, xName: "shares", xLabel: "shares bought in a line that never pays", aria: "Score change from buying shares in a dead line: rises steeply under the Tally, falls under base-price scoring" });
+  });
+
+  dash.draw("leading", (el) => {
+    if (!NM.status(el, "leading")) return;
+    const rows = dash.data("leading").data;
+    NM.lines(el, NM.rules.map(([k, l], i) => ({ name: l, color: i, points: rows.filter((r) => r.ruleKey === k).map((r) => ({ x: +r.round, y: +r.leading })) })),
+      { yDomain: [0, 1], yFmt: d3.format(".0%"), xName: "round", xLabel: "round", aria: "Share of games the eventual winner leads after each round; above 80% from round 2 except under cash-only scoring" });
+  });
+</script>
+
+<script>
+  dash.draw("shapeRows", (el) => {
+    const d = dash.data("shape");
+    if (d.status !== "ok") { el.replaceChildren(); return; }
+    const f1 = d3.format(".1f"), f0 = d3.format(".0f");
+    el.replaceChildren(...NM.rules.map(([k]) => d.data.find((r) => r.ruleKey === k)).filter(Boolean).map((r) => {
+      const tr = document.createElement("tr"); tr.dataset.key = r.ruleKey;
+      [r.rule, f1(r.leadChanges), f1(r.lockRound), d3.format(".0%")(r.margin), f0(r.divCalls), f0(r.stations), f1(r.shares)].forEach((v) => { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+      return tr;
+    }));
+  });
+
+  dash.draw("archRows", (el) => {
+    const d = dash.data("archetypes");
+    if (d.status !== "ok") { el.replaceChildren(); return; }
+    const names = [...new Set(d.data.map((r) => r.archetype))];
+    el.replaceChildren(...names.map((n) => {
+      const tr = document.createElement("tr"); const th = document.createElement("td"); th.textContent = n; tr.appendChild(th);
+      NM.rules.forEach(([k]) => { const r = d.data.find((x) => x.archetype === n && x.ruleKey === k); const td = document.createElement("td"); td.textContent = r ? d3.format(".0%")(r.win) : "—";
+        td.dataset.source = "archetypes"; td.dataset.field = "win"; td.dataset.where = `archetype=${encodeURIComponent(n)}&ruleKey=${k}`; tr.appendChild(td); });
+      return tr;
+    }));
+  });
+
+  document.querySelectorAll("#knob-rule").forEach((sel) => sel.addEventListener("change", () => { NM.state.knobRule = sel.value; dash.draw("knobRows"); }));
+  const KNOB = { stationBase: "Station base", stepPerShare: "Price step ($)", drawCount: "Discs per draw", apPerTurn: "Action points", startCash: "Starting cash", perZone: "$ per zone", perStation: "$ per station",
+                 crossMode: "Crossing", roundLimit: "Rounds", investPerTurn: "Shares per turn", priceGrowth: "Price growth per dividend", handLimit: "Hand limit", players: "Players" };
+  dash.draw("knobRows", (el) => {
+    const d = dash.data("knobs");
+    if (d.status !== "ok") { el.replaceChildren(); return; }
+    const p = d3.format(".0%"), f = d3.format(".0f"), f1 = d3.format(".1f"), f2 = d3.format(".2f");
+    const rows = d.data.filter((r) => r.ruleKey === NM.state.knobRule);
+    let last = null;
+    el.replaceChildren(...rows.map((r) => {
+      const tr = document.createElement("tr"); tr.dataset.key = `${r.ruleKey},${r.knob},${encodeURIComponent(r.value)}`;
+      [last === r.knob ? "" : (KNOB[r.knob] || r.knob), r.value, p(r.firstSeat), f(r.stations), f(r.track), f1(r.zones), f(r.divCalls), f1(r.leadChanges), f2(r.similarity), p(r.neverBuilds)]
+        .forEach((v) => { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+      last = r.knob; return tr;
+    }));
+  });
+</script>
