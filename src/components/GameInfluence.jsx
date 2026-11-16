@@ -8,6 +8,7 @@ import {
   makeV2, v2Player, lineOf, trackOwner, lineEdges, lineNet, lineDegree, occupants,
   stationsOf, zonesOf, perShare, priceOf, sharesLeft, countLinks, syncMarkers,
   nearestStation, stationCost, burnCount,
+  pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -109,9 +110,12 @@ export default function GameInfluence({ hidden, slot }) {
 
   const acquirer = useMemo(() => {
     let best = null;
-    LINES.forEach((l) => { const n = stationsOf(state, l.id); if (!best || n > best.n) best = { id: l.id, n }; });
+    liveLines(state).forEach((l) => { const n = stationsOf(state, l.id); if (!best || n > best.n) best = { id: l.id, n }; });
     return best;
   }, [state]);
+  const live = liveLines(state);
+  const dueMerges = useMemo(() => pendingMerges(state), [state]);
+  useEffect(() => { if (isDefunct(state, activeLine) && live.length) setActiveLine(live[0].id); }, [state, activeLine]); // eslint-disable-line
 
   /* which extensions are legal for the active line, and what they cost */
   const legal = useMemo(() => {
@@ -283,15 +287,16 @@ export default function GameInfluence({ hidden, slot }) {
     if (i === 0) s.turn.round += 1;
   }, "ended turn");
 
-  const doMerge = () => commit((s) => {
-    const from = mergeFrom, to = mergeTo;
-    if (from === to) return;
-    Object.keys(s.track).forEach((k) => { if (trackOwner(s, k) === from) s.track[k] = [to]; });
-    Object.entries(s.stations).forEach(([h, x]) => { if (x.o === from) s.stations[h] = { o: to }; });
-    s.players.forEach((p) => { if (p.shares?.[from]) { p.shares[to] = (p.shares[to] || 0) + p.shares[from]; delete p.shares[from]; } });
-    s.sold[to] = Math.min(s.settings.sharesPerLine, (s.sold[to] || 0) + (s.sold[from] || 0));
-    s.sold[from] = 0; s.prices[from] = s.settings.startPrice;
-  }, `merged ${lineOf(mergeFrom)?.name} into ${lineOf(mergeTo)?.name}`);
+  /* line a absorbs line d: bonuses to d's two biggest holders, d's shares sold at base price, d's track,
+     stations and discs become a's. The payout is worked out on the board as it stands when the move is saved. */
+  const runMerge = (a, d) => {
+    if (a === d || isDefunct(state, a) || isDefunct(state, d)) return;
+    const pays = mergePayouts(state, d).filter((x) => x.bonus || x.sale);
+    const who = pays.map((x) => `${x.name} +$${x.bonus + x.sale}`).join(", ");
+    commit((s) => { if (!isDefunct(s, a) && !isDefunct(s, d)) applyMerge(s, a, d); },
+           `merged ${lineOf(d)?.name} into ${lineOf(a)?.name}${who ? ` (${who})` : ""}`);
+  };
+  const doMerge = () => runMerge(mergeTo, mergeFrom);
 
   const cells = tab === "map" ? GRID : Object.keys(map.hexes).map((id) => { const [c, r] = parseId(id); return { c, r, id }; });
   const view = useMemo(() => {
@@ -412,7 +417,7 @@ export default function GameInfluence({ hidden, slot }) {
   const btn = "h-10 px-4 rounded-lg border border-[#CFCEC7] bg-white font-semibold text-[14px] hover:bg-[#F2F1EC] disabled:opacity-40 disabled:hover:bg-white";
   const seg = (on) => `h-8 px-3 text-[13px] font-semibold ${on ? "bg-[#111] text-white" : "bg-white text-[#111] hover:bg-[#F2F1EC]"}`;
   const hand = viewer?.hand || [];
-  const handBy = LINES.map((l) => ({ l, n: hand.filter((d) => d === l.id).length }));
+  const handBy = liveLines(state).map((l) => ({ l, n: hand.filter((d) => d === l.id).length }));
 
   return (
     <div className="flex-1 min-h-0 flex-col lg:flex-row text-[#111] bg-[#F2F1EC]" style={{ display: hidden ? "none" : "flex" }}>
@@ -499,7 +504,10 @@ export default function GameInfluence({ hidden, slot }) {
             {N("Starting cash", "startCash", 10)}
             {N("$ per station", "perStation")}
             {N("$ per zone", "perZone")}
-            {N("Discs to resist a merge", "mergeResist")}
+            {N("Merge when both lines have (stations)", "mergeAt")}
+            {N("A line is safe from (stations, 0 = never)", "safeAt")}
+            {N("Majority bonus (× base price)", "majBonus")}
+            {N("Minority bonus (× base price)", "minBonus")}
           </div>
           <p className="text-[13px] text-[#6B6B66] mt-4">
             Simulation found: separation peaks around round 14, so 15 is the sweet spot. Station base 3 with round-up
@@ -533,7 +541,7 @@ export default function GameInfluence({ hidden, slot }) {
           )}
           {tab === "play" && (
             <div className="flex flex-wrap items-center gap-1">
-              {LINES.map((l) => {
+              {live.map((l) => {
                 const n = handCount(cur, l.id), on = activeLine === l.id;
                 return (
                   <button key={l.id} onClick={() => setActiveLine(l.id)} title={`${l.name} — ${cur?.name} holds ${n}`}
@@ -677,6 +685,23 @@ export default function GameInfluence({ hidden, slot }) {
             </span>
           </div>
 
+          {dueMerges.map(({ a, d }) => {
+            const pays = mergePayouts(state, d).filter((x) => x.bonus || x.sale);
+            return (
+              <div key={`${a}-${d}`} className="mt-3 rounded-lg border-2 border-[#E58A00] bg-[#FFF6DB] p-3 text-[13px]">
+                <div className="flex items-center gap-1.5 font-bold text-[14px]">
+                  <Bullet lid={d} size={22} /><span>→</span><Bullet lid={a} size={22} />
+                  <span>{lineOf(a)?.name} meets {lineOf(d)?.name}</span>
+                </div>
+                <p className="mt-1 text-[#3A3A36]">
+                  {lineOf(d)?.name} ({stationsOf(state, d)} stations) merges into {lineOf(a)?.name} ({stationsOf(state, a)}).{" "}
+                  {pays.length ? pays.map((x) => `${x.name} gets $${x.bonus + x.sale}${x.bonus ? ` ($${x.bonus} bonus)` : ""}`).join(" · ") : "Nobody holds shares in it."}
+                </p>
+                <button onClick={() => runMerge(a, d)} className="mt-2 h-9 px-4 rounded-lg bg-[#111] text-white font-semibold">Merge now</button>
+              </div>
+            );
+          })}
+
           <div className="mt-4">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">
@@ -741,7 +766,7 @@ export default function GameInfluence({ hidden, slot }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {LINES.map((l) => {
+                  {live.map((l) => {
                     const rc = reach[l.id], isAcq = acquirer?.id === l.id;
                     const noBuy = S.strict && (handCount(cur, l.id) < 1 || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn);
                     const noWild = S.strict && ((cur?.hand || []).length < S.wildCost || (cur?.cash ?? 0) < rc.price || rc.left <= 0 || state.turn.invests >= S.investPerTurn);
@@ -751,7 +776,7 @@ export default function GameInfluence({ hidden, slot }) {
                           <span className="flex items-center gap-2">
                             <Bullet lid={l.id} size={24} />
                             <span className="font-semibold">{l.name}</span>
-                            {isAcq && rc.stations > 0 && <span className="text-[10px] px-1.5 rounded bg-[#111] text-white font-semibold" title="Most stations — acquires in a merge">ACQ</span>}
+                            {S.safeAt > 0 && rc.stations >= S.safeAt && <span className="text-[10px] px-1.5 rounded bg-[#1E6B36] text-white font-semibold" title={`${S.safeAt}+ stations: can't be absorbed`}>SAFE</span>}
                           </span>
                         </td>
                         <td className="text-right">{rc.stations}</td>
@@ -776,22 +801,39 @@ export default function GameInfluence({ hidden, slot }) {
                 Invests this turn: {state.turn.invests}/{S.investPerTurn}.
               </p>
 
-              <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66] mt-6 mb-2">Merge</h3>
+              <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66] mt-6 mb-2">Merges</h3>
               <p className="text-[13px] text-[#6B6B66] mb-2">
-                Moves all track, stations and shares from one line to another. Payouts are not automated.
-                {acquirer?.n ? <> Acquirer now: <b className="text-[#111]">{lineOf(acquirer.id)?.name}</b> ({acquirer.n} stations).</> : null}
+                When two lines meet and both have {S.mergeAt} or more stations, the line with more stations absorbs the other
+                {S.safeAt ? <> (a line with {S.safeAt}+ stations is safe and can&rsquo;t be absorbed)</> : null}. The absorbed line&rsquo;s biggest
+                holder gets {S.majBonus}× its base price, the second biggest {S.minBonus}×, then every holder sells those shares at the base price.
+                Its track, stations and discs become the acquirer&rsquo;s.
               </p>
-              <div className="flex items-center gap-2 text-[13px]">
-                <select value={mergeFrom} onChange={(e) => setMergeFrom(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
-                  {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-                <span className="text-[#6B6B66]">into</span>
-                <select value={mergeTo} onChange={(e) => setMergeTo(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
-                  {LINES.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-                <button onClick={() => { if (confirm(`Merge ${lineOf(mergeFrom)?.name} into ${lineOf(mergeTo)?.name}?`)) doMerge(); }}
-                        className="h-9 px-3 rounded-md bg-[#111] text-white font-semibold">Merge</button>
-              </div>
+              {dueMerges.length > 0 && <p className="text-[13px] font-semibold text-[#8A5A00] mb-2">A merge is due. See the turn panel.</p>}
+              {(state.mergers || []).length > 0 && (
+                <div className="text-[13px] space-y-1 mb-3">
+                  {(state.mergers || []).map((m, i) => (
+                    <div key={i} className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[#6B6B66]">Round {m.round}:</span><Bullet lid={m.d} size={18} /><span>→</span><Bullet lid={m.a} size={18} />
+                      <span className="text-[#6B6B66]">{lineOf(m.d)?.name} into {lineOf(m.a)?.name}</span>
+                      {m.pays?.length > 0 && <span className="text-[#6B6B66]">· {m.pays.map((x) => `${state.players.find((p) => p.id === x.id)?.name || "?"} $${x.bonus + x.sale}`).join(", ")}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <details className="text-[13px]">
+                <summary className="cursor-pointer text-[#6B6B66]">Merge two lines by hand</summary>
+                <div className="flex items-center gap-2 mt-2">
+                  <select value={mergeFrom} onChange={(e) => setMergeFrom(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
+                    {live.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  <span className="text-[#6B6B66]">into</span>
+                  <select value={mergeTo} onChange={(e) => setMergeTo(Number(e.target.value))} className="h-9 flex-1 min-w-0 rounded-md border border-[#CFCEC7] bg-white px-2">
+                    {live.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  <button onClick={() => { if (mergeFrom !== mergeTo && confirm(`Merge ${lineOf(mergeFrom)?.name} into ${lineOf(mergeTo)?.name}? Bonuses are paid and its shares are sold.`)) doMerge(); }}
+                          className="h-9 px-3 rounded-md bg-[#111] text-white font-semibold">Merge</button>
+                </div>
+              </details>
             </>
           )}
 
@@ -815,7 +857,7 @@ export default function GameInfluence({ hidden, slot }) {
                         : <button onClick={() => commit((s) => { s.turn.active = p.id; }, `made ${p.name} active`)} className="text-[11px] px-2 py-1 rounded-md border border-[#CFCEC7] font-semibold hover:bg-[#F2F1EC]">Make active</button>}
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2.5">
-                      {LINES.map((l) => {
+                      {live.map((l) => {
                         const n = (p.shares || {})[l.id] || 0;
                         return (
                           <span key={l.id} className={`flex items-center rounded-full h-8 pl-0.5 pr-0.5 ${n ? "bg-[#F2F1EC]" : "bg-[#F8F8F5] opacity-60 hover:opacity-100"}`}>

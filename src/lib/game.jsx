@@ -376,8 +376,11 @@ export const V2D = {
   investPerTurn: 3, wildCost: 2, startCash: 60,
   /* dividends */
   perStation: 1, perZone: 1,
-  /* merge — acquirer is whichever line has the most stations */
-  mergeResist: 5,
+  /* merges: two lines whose networks touch, both with at least mergeAt stations, merge. The line with
+     more stations absorbs the other. A line with safeAt or more stations can't be absorbed. The absorbed
+     line's biggest holder gets majBonus × its base price, the second biggest minBonus ×, then every holder
+     sells those shares to the bank at the base price. */
+  mergeAt: 4, safeAt: 8, majBonus: 5, minBonus: 2,
   /* sandbox: nothing is enforced unless you switch this on */
   strict: false,
   autoAP: false,
@@ -488,3 +491,57 @@ export const burnCount = (s, n) => {
   const raw = n * s.settings.burnFrac;
   return s.settings.burnRound === "up" ? Math.ceil(raw) : Math.floor(raw);
 };
+
+/* ── merges ──────────────────────────────────────────────── */
+export const isDefunct = (s, lid) => (s.defunct || []).includes(lid);
+export const liveLines = (s) => LINES.filter((l) => !isDefunct(s, l.id));
+export const linesTouch = (s, a, b) => { const nb = lineNet(s, b); for (const h of lineNet(s, a)) if (nb.has(h)) return true; return false; };
+
+/* every merge the board calls for right now, as {a: acquirer, d: absorbed} */
+export function pendingMerges(s) {
+  const S = s.settings, out = [], live = liveLines(s).map((l) => l.id);
+  const at = S.mergeAt ?? 4, safe = S.safeAt ?? 0;
+  for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+    const a = live[i], b = live[j], sa = stationsOf(s, a), sb = stationsOf(s, b);
+    if (sa < at || sb < at) continue;
+    if (safe && sa >= safe && sb >= safe) continue;
+    if (!linesTouch(s, a, b)) continue;
+    const ta = lineEdges(s, a).length, tb = lineEdges(s, b).length;
+    const big = sa !== sb ? (sa > sb ? a : b) : ta !== tb ? (ta > tb ? a : b) : a;
+    out.push({ a: big, d: big === a ? b : a });
+  }
+  return out;
+}
+
+/* what each player gets when line d is absorbed: Acquire-style bonuses, then the sell-off at base price */
+export function mergePayouts(s, d) {
+  const S = s.settings, P = s.prices?.[d] ?? S.startPrice, maj = S.majBonus ?? 5, min = S.minBonus ?? 2;
+  const out = s.players.map((p) => ({ id: p.id, name: p.name, shares: p.shares?.[d] || 0, bonus: 0, sale: (p.shares?.[d] || 0) * P }));
+  const hold = out.map((o) => o.shares), top = Math.max(0, ...hold);
+  if (top > 0) {
+    const firsts = hold.map((h, i) => (h === top ? i : -1)).filter((i) => i >= 0);
+    if (firsts.length > 1) firsts.forEach((i) => { out[i].bonus += Math.round((maj + min) * P / firsts.length); });
+    else {
+      out[firsts[0]].bonus += maj * P;
+      const rest = hold.map((h, i) => (i === firsts[0] ? -1 : h)), sec = Math.max(...rest);
+      if (sec > 0) { const secs = rest.map((h, i) => (h === sec ? i : -1)).filter((i) => i >= 0); secs.forEach((i) => { out[i].bonus += Math.round(min * P / secs.length); }); }
+      else out[firsts[0]].bonus += min * P;
+    }
+  }
+  return out;
+}
+
+/* line a absorbs line d, in place. Returns the payouts. */
+export function applyMerge(s, a, d) {
+  const pays = mergePayouts(s, d);
+  pays.forEach((x) => { const p = s.players.find((q) => q.id === x.id); p.cash += x.bonus + x.sale; if (p.shares) delete p.shares[d]; });
+  Object.keys(s.track).forEach((k) => { if (trackOwner(s, k) === d) s.track[k] = [a]; });
+  Object.entries(s.stations).forEach(([h, x]) => { if (x.o === d) s.stations[h] = { o: a }; });
+  const swap = (arr) => (arr || []).map((c) => (c === d ? a : c));
+  s.players.forEach((p) => { p.hand = swap(p.hand); });
+  s.bag = swap(s.bag); s.onboard = swap(s.onboard);
+  s.sold[d] = 0;
+  s.defunct = [...(s.defunct || []), d];
+  s.mergers = [...(s.mergers || []), { round: s.turn?.round, a, d, pays: pays.filter((x) => x.bonus || x.sale).map((x) => ({ id: x.id, bonus: x.bonus, sale: x.sale })) }];
+  return pays;
+}

@@ -81,7 +81,7 @@ Pointy-top hexes in odd-r offset, 13 columns by 14 rows, traced from the physica
 
 ## Known gaps
 
-- **The merge is not implemented.** Simulation settled on a threshold of four stations on both lines, the line with more stations acquiring, and Acquire-style majority/minority bonuses at roughly 5×/2× share price. None of that is coded — there's a manual merge control that moves track, stations and shares across, and no payout.
+- **Merges are prompted, not forced.** When two lines meet and both have enough stations (Tuning: 4 by default; safe from 8), the turn panel shows the merge with each player's payout and a Merge now button. Nothing merges until someone presses it. The rule lives in `pendingMerges`/`applyMerge` in `src/lib/game.jsx` and is cross-checked against the simulator.
 - **Hands are not hidden.** Everyone sees the seated player's discs.
 - **End-of-game scoring is cash + shares only.** Merger bonuses are not included in the tally.
 - **V1 is frozen.** It reflects the earlier design and hasn't been updated since the direction changed.

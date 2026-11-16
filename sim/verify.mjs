@@ -77,5 +77,31 @@ for (let seed = 1; seed <= 300; seed++) {
     for (let n = 0; n < 6; n++) eq(E.burnCount(g, n), App.burnCount(st, n), `burn ${n}`);
   }
 }
+/* merges: the app's pendingMerges/applyMerge against the engine's checkMerges */
+let mergeCases = 0;
+for (let seed = 1; seed <= 400; seed++) {
+  const g = E.newGame({ merges: false, mergeAt: 3 + (seed % 3), safeAt: seed % 2 ? 8 : 0 }, 50000 + seed);
+  const R = E.rng(seed * 104729);
+  for (let step = 0; step < 160; step++) {
+    const l = Math.floor(R() * E.NL), opts = E.legalTrack(g, l);
+    if (opts.length && R() < 0.6) { const o = opts[Math.floor(R() * opts.length)]; g.track.set(o.k, l); g.cache.fill(null); }
+    else { const net = [...E.line(g, l).net].filter((h) => !g.stations.has(h)); if (net.length) { g.stations.set(net[Math.floor(R() * net.length)], l); g.cache.fill(null); } }
+  }
+  g.players.forEach((p, i) => { for (let l = 0; l < E.NL; l++) p.shares[l] = Math.floor(R() * 4); p.cash = 100 + i; });
+  for (let l = 0; l < E.NL; l++) { g.prices[l] = 10 + Math.floor(R() * 30); g.sold[l] = g.players.reduce((a, p) => a + p.shares[l], 0); }
+  const st = toApp(g);
+  st.players = g.players.map((p) => ({ id: p.id, name: "P" + p.id, cash: p.cash, shares: Object.fromEntries(p.shares.map((n, l) => [l, n])), hand: p.hand.flatMap((n, c) => Array(n).fill(c)) }));
+  st.bag = g.bag.flatMap((n, c) => Array(n).fill(c)); st.onboard = []; st.turn = { round: 1 };
+  if (!App.pendingMerges(st).length) continue;
+  mergeCases++;
+  for (let guard = 0; guard < 7; guard++) { const m = App.pendingMerges(st); if (!m.length) break; App.applyMerge(st, m[0].a, m[0].d); }
+  g.S = { ...g.S, merges: true }; E.checkMerges(g, -1);
+  eq(st.players.map((p) => p.cash), g.players.map((p) => p.cash), `merge cash seed ${seed}`);
+  eq(Object.fromEntries(Object.entries(st.track).map(([k, v]) => [k, v[0]])), Object.fromEntries(g.track), `merge track seed ${seed}`);
+  eq(Object.fromEntries(Object.entries(st.stations).map(([h, v]) => [h, v.o])), Object.fromEntries(g.stations), `merge stations seed ${seed}`);
+  eq([...(st.defunct || [])].sort(), g.dead.map((d, l) => (d ? l : -1)).filter((l) => l >= 0).sort(), `merge defunct seed ${seed}`);
+  eq(st.players.map((p) => Array.from({ length: E.NL }, (_, c) => p.hand.filter((x) => x === c).length)), g.players.map((p) => p.hand), `merge hands seed ${seed}`);
+}
+console.log(`merge cases compared: ${mergeCases}`);
 console.log(`verify: ${checks} checks, ${fails} mismatches`);
 process.exit(fails ? 1 : 0);
