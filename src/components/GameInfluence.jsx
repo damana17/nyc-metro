@@ -10,7 +10,7 @@ import {
   nearestStation, stationCost, burnCount,
   pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
   nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore, dealGoals,
-  startingCash, untouched,
+  startingCash, untouched, EVENTS, eventFor, dealEvents, startRoundEvent, dividendNow, payDividends, stationCostNow, stationBlockedNow,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -108,7 +108,7 @@ export default function GameInfluence({ hidden, slot }) {
     const out = {};
     LINES.forEach((l) => {
       out[l.id] = { stations: stationsOf(state, l.id), zones: [...zonesOf(state, l.id)],
-                    links: countLinks(state, l.id), per: perShare(state, l.id),
+                    links: countLinks(state, l.id), per: dividendNow(state, l.id),
                     price: priceOf(state, l.id), left: sharesLeft(state, l.id) };
     });
     return out;
@@ -196,14 +196,15 @@ export default function GameInfluence({ hidden, slot }) {
       if (!state.stations[id]) {
         const net = lineNet(state, activeLine);
         if (!net.has(id)) { setStatus(`${lineOf(activeLine).name} has no track there`); return; }
-        const c = stationCost(state, id);
+        if (stationBlockedNow(state, id)) { setStatus("Robert Moses: no new stations in Queens this round"); return; }
+        const c = stationCostNow(state, id);
         if (handCount(cur, activeLine) < c) { setStatus(`that station costs ${c} discs — ${cur?.name} holds ${handCount(cur, activeLine)}`); return; }
       }
       setStatus("");
       commit((s2) => {
         if (s2.stations[id]) { delete s2.stations[id]; return; }
         const p = s2.players.find((x) => x.id === s2.turn.active);
-        const c = stationCost(s2, id), burn = burnCount(s2, c);
+        const c = stationCostNow(s2, id), burn = burnCount(s2, c);
         for (let i = 0; i < c; i++) { const ix = p.hand.indexOf(activeLine); if (ix >= 0) p.hand.splice(ix, 1); }
         for (let i = 0; i < burn; i++) s2.burned.push(activeLine);
         for (let i = 0; i < c - burn; i++) s2.bag.push(activeLine);
@@ -248,12 +249,7 @@ export default function GameInfluence({ hidden, slot }) {
   }, `bought a ${lineOf(lid)?.name} share`);
 
   const callDividends = () => commit((s) => {
-    s.players.forEach((p) => {
-      let paid = 0;
-      Object.entries(p.shares || {}).forEach(([lid, n]) => { paid += n * perShare(s, Number(lid)); });
-      p.cash += paid;
-    });
-    LINES.forEach((l) => { s.prices[l.id] = (s.prices[l.id] ?? s.settings.startPrice) + Math.round(perShare(s, l.id) * s.settings.priceGrowth); });
+    payDividends(s);   // this round's event (strike, boom, depression) is applied here
     if (s.settings.autoAP && !s.turn.usedSlot) { s.turn.usedSlot = true; s.turn.ap = Math.max(0, s.turn.ap - 1); }
   }, "called for dividends");
 
@@ -311,7 +307,7 @@ export default function GameInfluence({ hidden, slot }) {
     return out;
   }, [state, map.hexes]);
 
-  const selCost = sel && map.hexes[sel] ? { d: nearestStation(state, sel), c: stationCost(state, sel) } : null;
+  const selCost = sel && map.hexes[sel] ? { d: nearestStation(state, sel), c: stationCostNow(state, sel) } : null;
   const N = (label, key, step = 1, suffix) => (
     <Field label={label} value={S[key]} step={step} suffix={suffix}
            onChange={(v) => edit((s) => { s.settings[key] = v; })} onDone={syncNow} />
@@ -490,7 +486,7 @@ export default function GameInfluence({ hidden, slot }) {
       {showTune && (
         <Sheet title="Tuning" onClose={() => setShowTune(false)} wide>
           <div className="flex flex-wrap items-center gap-3 mb-3">
-            <button onClick={() => { if (confirm("Reset every setting to the recommended defaults? The board and scores are not touched.")) commit((s2) => { s2.settings = { ...V2D, strict: s2.settings.strict, autoAP: s2.settings.autoAP }; if (!s2.goals) dealGoals(s2); }, "reset tuning to the recommended defaults"); }}
+            <button onClick={() => { if (confirm("Reset every setting to the recommended defaults? The board and scores are not touched.")) commit((s2) => { s2.settings = { ...V2D, strict: s2.settings.strict, autoAP: s2.settings.autoAP }; if (!s2.goals) dealGoals(s2); if (!s2.events) { dealEvents(s2); s2.mods = {}; } }, "reset tuning to the recommended defaults"); }}
                     className="h-9 px-3 rounded-lg border border-[#CFCEC7] font-semibold text-[13px] hover:bg-[#F2F1EC]">Reset to recommended defaults</button>
             <span className="text-[12px] text-[#6B6B66]">Games started before an update keep their old settings. This brings them up to date.</span>
           </div>
@@ -517,6 +513,8 @@ export default function GameInfluence({ hidden, slot }) {
             {Sel("Turn order", "turnOrder", [["snake", "snake: 1-2-3, 3-2-1"], ["rotate", "start player moves left"], ["fixed", "fixed: 1-2-3 every round"]])}
             <label className="flex items-center justify-between gap-2 py-0.5"><span className="text-xs text-stone-600">End-of-game holder bonuses</span>
               <input type="checkbox" checked={!!S.endBonuses} onChange={(e) => commit((s2) => { s2.settings.endBonuses = e.target.checked; })} /></label>
+            <label className="flex items-center justify-between gap-2 py-0.5"><span className="text-xs text-stone-600">City events deck</span>
+              <input type="checkbox" checked={!!S.events} onChange={(e) => commit((s2) => { s2.settings.events = e.target.checked; if (e.target.checked && !s2.events) dealEvents(s2); if (!e.target.checked) s2.mods = {}; })} /></label>
             <label className="flex items-center justify-between gap-2 py-0.5"><span className="text-xs text-stone-600">Landmark goals and secret routes</span>
               <input type="checkbox" checked={!!S.goals} onChange={(e) => commit((s2) => { s2.settings.goals = e.target.checked; })} /></label>
             {N("Goal bonus to the player who completes it ($)", "goalBonus", 5)}
@@ -686,6 +684,26 @@ export default function GameInfluence({ hidden, slot }) {
             {over && <span className="px-1.5 py-0.5 rounded bg-[#111] text-white normal-case tracking-normal">Game over</span>}
             {S.strict && <span className="px-1.5 py-0.5 rounded bg-[#E9F3EC] text-[#1E6B36] normal-case tracking-normal">Rules on</span>}
           </div>
+          {S.events && state.events && (() => {
+            const now = eventFor(state, state.turn.round), next = eventFor(state, state.turn.round + 1);
+            if (!now) return null;
+            const strike = state.mods?.strike;
+            return (
+              <div className="mt-2 rounded-lg bg-[#111] text-white px-3 py-2.5">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-white/60 shrink-0">This round</span>
+                  <span className="text-[15px] font-bold">{now.name}</span>
+                </div>
+                <div className="text-[13px] text-white/85 mt-0.5">
+                  {now.text}{now.id === "strike" && strike !== undefined ? ` ${lineOf(strike)?.name} is out.` : ""}
+                  {now.id === "moses" || (state.events.mosesUntil >= state.turn.round && now.id !== "moses") ? (state.events.mosesUntil >= state.turn.round && now.id !== "moses" ? " Robert Moses: still no new stations in Queens." : "") : ""}
+                </div>
+                {next && state.turn.round < S.roundLimit && (
+                  <div className="text-[12px] text-white/60 mt-1.5">Next round: <span className="text-white/90">{next.name}</span> · {next.text}</div>
+                )}
+              </div>
+            );
+          })()}
           <div className="flex items-center gap-3 mt-1">
             <h2 className="text-[22px] font-bold leading-tight truncate">{myTurn ? "Your turn" : `${cur?.name}'s turn`}</h2>
             {seat !== null && seat !== undefined && !myTurn && <span className="text-[12px] px-2 py-0.5 rounded-full bg-[#FFF3D6] text-[#8A5A00] font-semibold shrink-0">you&rsquo;re {viewer?.name}</span>}
@@ -825,6 +843,7 @@ export default function GameInfluence({ hidden, slot }) {
                           <span className="flex items-center gap-2">
                             <Bullet lid={l.id} size={24} />
                             <span className="font-semibold">{l.name}</span>
+                            {state.mods?.strike === l.id && <span className="text-[10px] px-1.5 rounded bg-[#D93025] text-white font-semibold" title="Transit strike: pays nothing this round">STRIKE</span>}
                             {S.safeAt > 0 && rc.stations >= S.safeAt && <span className="text-[10px] px-1.5 rounded bg-[#1E6B36] text-white font-semibold" title={`${S.safeAt}+ stations: can't be absorbed`}>SAFE</span>}
                             {S.safeAt > 0 && rc.stations < S.safeAt && rc.stations >= S.safeAt - 2 && <span className="text-[10px] px-1.5 rounded bg-[#E9F3EC] text-[#1E6B36] font-semibold" title={`${S.safeAt - rc.stations} more station${S.safeAt - rc.stations > 1 ? "s" : ""} and it can't be absorbed`}>SAFE IN {S.safeAt - rc.stations}</span>}
                           </span>

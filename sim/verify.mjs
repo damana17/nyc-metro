@@ -104,5 +104,24 @@ for (let seed = 1; seed <= 400; seed++) {
   eq(st.players.map((p) => Array.from({ length: E.NL }, (_, c) => p.hand.filter((x) => x === c).length)), g.players.map((p) => p.hand), `merge hands seed ${seed}`);
 }
 console.log(`merge cases compared: ${mergeCases}`);
+
+/* events: same deck, and the same event-adjusted dividends, in the app and the engine */
+eq(Object.fromEntries(Object.entries(App.EVENTS).map(([k, v]) => [k, v.n])), Object.fromEntries(Object.entries(E.EVENTS).map(([k, v]) => [k, v.n])), "events deck composition");
+for (let seed = 1; seed <= 300; seed++) {
+  const g = E.newGame({}, 70000 + seed), R = E.rng(seed * 31);
+  for (let step = 0; step < 80; step++) {
+    const l = Math.floor(R() * E.NL), opts = E.legalTrack(g, l);
+    if (opts.length && R() < 0.6) { const o = opts[Math.floor(R() * opts.length)]; g.track.set(o.k, l); g.cache.fill(null); }
+    else { const net = [...E.line(g, l).net].filter((h) => !g.stations.has(h)); if (net.length) { g.stations.set(net[Math.floor(R() * net.length)], l); g.cache.fill(null); } }
+  }
+  g.players.forEach((p) => { for (let l = 0; l < E.NL; l++) p.shares[l] = Math.floor(R() * 3); p.cash = 100; });
+  g.mods = { strike: R() < 0.5 ? Math.floor(R() * E.NL) : undefined, boom: R() < 0.5, divMult: R() < 0.3 ? 0.5 : undefined };
+  const st = toApp(g);
+  st.players = g.players.map((p) => ({ id: p.id, cash: p.cash, shares: Object.fromEntries(p.shares.map((n, l) => [l, n])), hand: [] }));
+  st.mods = { ...g.mods };
+  App.payDividends(st); E.payDividends(g);
+  eq(st.players.map((p) => p.cash), g.players.map((p) => p.cash), `event dividends seed ${seed}`);
+  eq(Array.from({ length: E.NL }, (_, l) => st.prices[l]), g.prices, `event prices seed ${seed}`);
+}
 console.log(`verify: ${checks} checks, ${fails} mismatches`);
 process.exit(fails ? 1 : 0);

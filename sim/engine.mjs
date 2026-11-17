@@ -12,7 +12,7 @@
  *   - The game ends after roundLimit full rounds.
  *   - Final score: see SCORING below. The app's Tally uses "mtm".
  */
-import { SEED_HEX, SEED_NAMES, SEED_NOCROSS, ZONE_OF, LINES, V2D, neighbors, hexDist, GOALS } from "../src/lib/game.jsx";
+import { SEED_HEX, SEED_NAMES, SEED_NOCROSS, ZONE_OF, LINES, V2D, neighbors, hexDist, GOALS, EVENTS as APP_EVENTS } from "../src/lib/game.jsx";
 export { GOALS };
 
 export const NL = LINES.length;
@@ -68,6 +68,7 @@ export const DEFAULTS = { ...V2D, strict: true, autoAP: true, players: 3, scorin
   /* idea 3, a city events deck: one card per round, the next one visible */
   events: false,
 };
+export const EVENTS_FROM_APP = APP_EVENTS;
 
 /* ── idea 3: the events deck ───────────────────────────────────────── */
 export const EVENTS = {

@@ -381,7 +381,8 @@ export const V2D = {
   sharesPerLine: 25,        // Acquire uses 25
   startPrice: 10, stepPerShare: 15, priceGrowth: 1,
   investPerTurn: 1, wildCost: 2, startCash: 60,
-  seatCash4: 10,            // with 4 or more players, each later seat starts with this much more ($60/$70/$80/$90)
+  seatCash4: 10,
+  events: true,             // a city events deck: one card per round, the next one visible            // with 4 or more players, each later seat starts with this much more ($60/$70/$80/$90)
   /* dividends */
   perStation: 1, perZone: 1,
   /* merges: two lines whose networks touch, both with at least mergeAt stations, merge. The line with
@@ -427,6 +428,8 @@ export const makeV2 = (over = {}, n = 3) => {
            turn: { active: 0, ap: S.apPerTurn, round: 1, invests: 0, usedSlot: false, k: 0, start: 0 },
            settings: S, log: [] };
   dealGoals(g);
+  dealEvents(g);
+  startRoundEvent(g);
   return g;
 };
 
@@ -567,7 +570,10 @@ export function nextTurn(s) {
   const T = s.turn, n = s.players.length || 1, order = s.settings.turnOrder || "fixed";
   if (T.k === undefined) { T.k = Math.max(0, s.players.findIndex((p) => p.id === T.active)); T.start = 0; }
   T.k += 1;
-  if (T.k >= n) { T.k = 0; T.round += 1; if (order === "rotate") T.start = ((T.start || 0) + 1) % n; }
+  if (T.k >= n) {
+    T.k = 0; T.round += 1; if (order === "rotate") T.start = ((T.start || 0) + 1) % n;
+    if (T.round <= (s.settings.roundLimit ?? 15)) startRoundEvent(s);
+  }
   const k = order === "snake" && T.round % 2 === 0 ? n - 1 - T.k : T.k;
   T.active = s.players[((T.start || 0) + k) % n].id;
   T.ap = s.settings.apPerTurn; T.invests = 0; T.usedSlot = false;
@@ -691,3 +697,79 @@ export function finalScore(s) {
   rows.forEach((r) => { r.total = r.cash + r.shares + r.bonuses + r.routes; });
   return rows;
 }
+
+/* ── the city events deck ───────────────────────────────────
+   One card is revealed at the start of each round and lasts for that round; the next card is
+   visible. Random choices (which line strikes, which station burns) are rolled when the deck is
+   shuffled, so every browser and every replay of a move gets the same result. */
+export const EVENTS = {
+  quiet: { n: 3, name: "A quiet year", text: "Nothing happens." },
+  irt: { n: 2, name: "1904: the IRT opens", text: "Stations cost 1 disc less this round." },
+  depression: { n: 1, name: "The Great Depression", text: "Dividends are halved this round (rounded down)." },
+  moses: { n: 1, name: "Robert Moses builds highways", text: "No new stations in Queens this round or next." },
+  fiscal: { n: 1, name: "The 1975 fiscal crisis", text: "Every line's base price drops $5 (not below $5)." },
+  boom: { n: 2, name: "Ridership boom", text: "Lines serving Midtown pay $1 more per share this round." },
+  bonds: { n: 1, name: "Transit bond issue", text: "Every player gets $20." },
+  strike: { n: 2, name: "Transit strike", text: "One line pays no dividends this round." },
+  expansion: { n: 1, name: "City expansion", text: "Every player draws 2 discs (up to the hand limit)." },
+  fire: { n: 1, name: "Station fire", text: "The line with the most stations loses one." },
+};
+export const QUEENS_ZONES = [5, 6, 7, 8];
+export const MIDTOWN_ZONE = 3;
+
+export function dealEvents(s) {
+  const deck = [];
+  Object.entries(EVENTS).forEach(([id, e]) => { for (let i = 0; i < e.n; i++) deck.push({ id, r: Math.random() }); });
+  for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+  s.events = { deck, mosesUntil: 0 };
+  s.mods = {};
+}
+export const eventFor = (s, round) => (s.events?.deck?.[round - 1] ? { ...EVENTS[s.events.deck[round - 1].id], id: s.events.deck[round - 1].id, r: s.events.deck[round - 1].r } : null);
+
+/* apply the card for the round that has just begun; returns a note for the log */
+export function startRoundEvent(s) {
+  s.mods = {};
+  if (!s.settings.events || !s.events) return null;
+  const ev = eventFor(s, s.turn.round);
+  if (!ev) return null;
+  const live = liveLines(s).map((l) => l.id);
+  let detail = "";
+  switch (ev.id) {
+    case "irt": s.mods.stationDiscount = 1; break;
+    case "depression": s.mods.divMult = 0.5; break;
+    case "moses": s.events.mosesUntil = s.turn.round + 1; break;
+    case "fiscal": live.forEach((l) => { s.prices[l] = Math.max(5, (s.prices[l] ?? s.settings.startPrice) - 5); }); break;
+    case "boom": s.mods.boom = true; break;
+    case "bonds": s.players.forEach((p) => { p.cash += 20; }); break;
+    case "strike": { const l = live[Math.floor(ev.r * live.length)]; s.mods.strike = l; detail = `: ${lineOf(l)?.name} is out`; break; }
+    case "expansion": s.players.forEach((p) => { for (let i = 0; i < 2 && (p.hand || []).length < s.settings.handLimit && s.bag.length; i++) p.hand.push(s.bag.pop()); }); break;
+    case "fire": {
+      const big = [...live].sort((a, b) => stationsOf(s, b) - stationsOf(s, a))[0];
+      const own = Object.keys(s.stations).filter((h) => s.stations[h].o === big).sort();
+      if (own.length > 1) { const h = own[Math.floor(ev.r * own.length)]; delete s.stations[h]; detail = `: ${lineOf(big)?.name} loses its station${s.map?.names?.[h] ? " at " + s.map.names[h] : ""}`; }
+      else detail = ": no line has a station to spare";
+      break;
+    }
+  }
+  const note = `round ${s.turn.round}: ${ev.name}${detail}`;
+  s._notes = [...(s._notes || []), note];
+  return note;
+}
+
+/* what a line pays per share this round, after any event */
+export function dividendNow(s, lid) {
+  const m = s.mods || {};
+  if (isDefunct(s, lid)) return 0;
+  let v = perShare(s, lid);
+  if (m.strike === lid) v = 0;
+  if (v && m.boom && zonesOf(s, lid).has(MIDTOWN_ZONE)) v += 1;
+  if (m.divMult) v = Math.floor(v * m.divMult);
+  return v;
+}
+export function payDividends(s) {
+  const ps = Object.fromEntries(LINES.map((l) => [l.id, dividendNow(s, l.id)]));
+  s.players.forEach((p) => { let paid = 0; Object.entries(p.shares || {}).forEach(([lid, n]) => { paid += n * (ps[lid] || 0); }); p.cash += paid; });
+  LINES.forEach((l) => { s.prices[l.id] = (s.prices[l.id] ?? s.settings.startPrice) + Math.round(ps[l.id] * s.settings.priceGrowth); });
+}
+export const stationCostNow = (s, h) => Math.max(0, stationCost(s, h) - (s.mods?.stationDiscount || 0));
+export const stationBlockedNow = (s, h) => !!(s.settings.events && s.events && s.events.mosesUntil >= s.turn.round && QUEENS_ZONES.includes(ZONE_OF[h]));
