@@ -430,6 +430,7 @@ export const makeV2 = (over = {}, n = 3) => {
   dealGoals(g);
   dealEvents(g);
   startRoundEvent(g);
+  delete g._notes;          // the round-1 card shows in the turn panel; a fresh board has no move to log it against
   return g;
 };
 
@@ -773,3 +774,30 @@ export function payDividends(s) {
 }
 export const stationCostNow = (s, h) => Math.max(0, stationCost(s, h) - (s.mods?.stationDiscount || 0));
 export const stationBlockedNow = (s, h) => !!(s.settings.events && s.events && s.events.mosesUntil >= s.turn.round && QUEENS_ZONES.includes(ZONE_OF[h]));
+
+/* ── bringing a game saved by an older build up to date ─────
+   A game keeps the settings it started with, so a setting added later is simply missing and reads as
+   "off". This fills in only what is missing (never a value the table chose), deals goals and an events
+   deck if the game has none, and reports what it did. The events deck starts next round: the current
+   round gets a quiet card so nothing changes mid-round. */
+export function needsUpgrade(s) {
+  if (!s?.settings) return false;
+  if (Object.keys(V2D).some((k) => !(k in s.settings))) return true;
+  if (s.settings.goals && !s.goals) return true;
+  if (s.settings.events && !s.events) return true;
+  return false;
+}
+export function upgradeGame(s) {
+  const added = Object.keys(V2D).filter((k) => !(k in s.settings));
+  added.forEach((k) => { s.settings[k] = V2D[k]; });
+  const dealt = [];
+  if (s.settings.goals && !s.goals) { dealGoals(s); dealt.push("landmark goals"); }
+  if (s.settings.events && !s.events) {
+    dealEvents(s);
+    const r = (s.turn?.round || 1) - 1, q = s.events.deck.findIndex((c) => c.id === "quiet");
+    if (q >= 0 && q !== r && s.events.deck[r]) { const t = s.events.deck[r]; s.events.deck[r] = s.events.deck[q]; s.events.deck[q] = t; }
+    s.mods = {};
+    dealt.push("the city events deck (from next round)");
+  }
+  return { added, dealt };
+}

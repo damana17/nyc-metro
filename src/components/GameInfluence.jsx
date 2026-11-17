@@ -10,7 +10,7 @@ import {
   nearestStation, stationCost, burnCount,
   pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
   nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore, dealGoals,
-  startingCash, untouched, EVENTS, eventFor, dealEvents, startRoundEvent, dividendNow, payDividends, stationCostNow, stationBlockedNow,
+  startingCash, untouched, needsUpgrade, upgradeGame, EVENTS, eventFor, dealEvents, startRoundEvent, dividendNow, payDividends, stationCostNow, stationBlockedNow,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -72,6 +72,19 @@ export default function GameInfluence({ hidden, slot }) {
     },
   });
   const { state, room, join, commit, diag, seat, setSeat, since } = T;
+
+  /* a game saved by an older build is brought up to date once, as a logged move everyone at the table sees */
+  const upgraded = useRef(null);
+  useEffect(() => {
+    if (!T.loaded || !needsUpgrade(state)) return;
+    const key = `${room || "solo"}:${state.v}`;
+    if (upgraded.current === key) return;
+    upgraded.current = key;
+    const preview = upgradeGame(JSON.parse(JSON.stringify(state)));
+    const what = [...preview.dealt, ...(preview.added.length ? [`${preview.added.length} new setting${preview.added.length > 1 ? "s" : ""}`] : [])].join(", ");
+    commit((s) => { if (needsUpgrade(s)) upgradeGame(s); }, `updated this game to the latest rules: ${what}`, { quiet: true });
+    setStatus(`This game was saved by an older version. Added: ${what}.`);
+  }, [T.loaded, state, room]); // eslint-disable-line
   seatRef.current = seat;
   const edit = useCallback((mut) => commit(mut, null, { quiet: true }), [commit]);
   const syncNow = () => {};
