@@ -9,7 +9,7 @@ import {
   stationsOf, zonesOf, perShare, priceOf, sharesLeft, countLinks, syncMarkers,
   nearestStation, stationCost, burnCount,
   pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
-  nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore,
+  nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore, dealGoals,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -488,6 +488,11 @@ export default function GameInfluence({ hidden, slot }) {
 
       {showTune && (
         <Sheet title="Tuning" onClose={() => setShowTune(false)} wide>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <button onClick={() => { if (confirm("Reset every setting to the recommended defaults? The board and scores are not touched.")) commit((s2) => { s2.settings = { ...V2D, strict: s2.settings.strict, autoAP: s2.settings.autoAP }; if (!s2.goals) dealGoals(s2); }, "reset tuning to the recommended defaults"); }}
+                    className="h-9 px-3 rounded-lg border border-[#CFCEC7] font-semibold text-[13px] hover:bg-[#F2F1EC]">Reset to recommended defaults</button>
+            <span className="text-[12px] text-[#6B6B66]">Games started before an update keep their old settings. This brings them up to date.</span>
+          </div>
           <div className="tune grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8">
             {N("Action points / turn", "apPerTurn")}
             {N("Rounds in the game", "roundLimit")}
