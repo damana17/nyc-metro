@@ -1,0 +1,72 @@
+{
+ "events": {
+  "label": "+ city events deck",
+  "settings": {
+   "scoring": "acq",
+   "merges": true,
+   "mergeAt": 4,
+   "safeAt": 8,
+   "rotateStart": true,
+   "investPerTurn": 1,
+   "goals": true,
+   "goalsPublic": 3,
+   "goalBonus": 30,
+   "goalPrice": 5,
+   "secretRoutes": 2,
+   "secretValue": 30,
+   "events": true
+  },
+  "theta": {
+   "phi": 0.2021096088654595,
+   "wDisc": 7.642020757013233,
+   "wPot": 12.085540591174505,
+   "lambda": 0.7721611935610418,
+   "noise": 0.48604550022137116
+  },
+  "games": 800,
+  "seats": [
+   0.385,
+   0.34625,
+   0.26875
+  ],
+  "leadChanges": 3.0225,
+  "lockRound": 7.18125,
+  "margin": 0.16950371613521936,
+  "winnerAheadR5": 0.6025,
+  "winnerAheadR10": 0.86875,
+  "mergers": 0.01375,
+  "gamesWithMerge": 0.0125,
+  "firstMergeRound": 14.3,
+  "mergeBonusShare": 0.0012651828395763636,
+  "divShare": 0.22094301048449247,
+  "contested": 6.97625,
+  "cos": 0.728201486075478,
+  "stations": 13.01375,
+  "track": 28.33,
+  "divCalls": 15.39,
+  "lookaheadWin": 0.6275,
+  "lookaheadSE": 0.02417352632530058,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.32375,
+   0.45125,
+   0.4,
+   0.5625,
+   0.6025,
+   0.68875,
+   0.7675,
+   0.81375,
+   0.86125,
+   0.86875,
+   0.8825,
+   0.8975,
+   0.90125,
+   0.89625,
+   1
+  ],
+  "takeovers": 0,
+  "blocks": 0,
+  "sells": 0,
+  "lookaheadMargin": 0.29416666666666663
+ }
+}

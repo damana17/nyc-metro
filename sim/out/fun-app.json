@@ -1,0 +1,71 @@
+{
+ "app": {
+  "label": "App today",
+  "settings": {
+   "scoring": "acq",
+   "merges": true,
+   "mergeAt": 4,
+   "safeAt": 8,
+   "rotateStart": true,
+   "investPerTurn": 1,
+   "goals": true,
+   "goalsPublic": 3,
+   "goalBonus": 30,
+   "goalPrice": 5,
+   "secretRoutes": 2,
+   "secretValue": 30
+  },
+  "theta": {
+   "phi": 0.15900298664043655,
+   "wDisc": 0.6320510833815205,
+   "wPot": 1.4756347649847168,
+   "lambda": 0.49570075775031,
+   "noise": 1.303899624987098
+  },
+  "games": 800,
+  "seats": [
+   0.263125,
+   0.345625,
+   0.39125
+  ],
+  "leadChanges": 3.99125,
+  "lockRound": 9.93,
+  "margin": 0.09016393442622951,
+  "winnerAheadR5": 0.38875,
+  "winnerAheadR10": 0.68875,
+  "mergers": 2.88375,
+  "gamesWithMerge": 0.95,
+  "firstMergeRound": 10.006578947368421,
+  "mergeBonusShare": 0.17095793958795127,
+  "divShare": 0.2703542636258309,
+  "contested": 4.0725,
+  "cos": 0.8484588272191776,
+  "stations": 36.79,
+  "track": 55.60875,
+  "divCalls": 14.53875,
+  "lookaheadWin": 0.6,
+  "lookaheadSE": 0.02449489742783178,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.2625,
+   0.27375,
+   0.34,
+   0.4,
+   0.38875,
+   0.57875,
+   0.63,
+   0.64125,
+   0.70375,
+   0.68875,
+   0.71875,
+   0.7225,
+   0.7625,
+   0.7825,
+   1
+  ],
+  "takeovers": 0,
+  "blocks": 0,
+  "sells": 0,
+  "lookaheadMargin": 0.26666666666666666
+ }
+}

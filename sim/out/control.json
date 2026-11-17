@@ -1,0 +1,98 @@
+{
+ "app": {
+  "label": "App today",
+  "seats": [
+   0.28,
+   0.33875,
+   0.38125
+  ],
+  "leadChanges": 3.98875,
+  "winnerAheadR5": 0.3775,
+  "winnerAheadR10": 0.67375,
+  "stations": 36.415,
+  "mergers": 2.77375,
+  "takeovers": 0,
+  "sells": 0,
+  "margin": 0.10385529424405479
+ },
+ "directors": {
+  "label": "+ line directors",
+  "seats": [
+   0.23625,
+   0.375,
+   0.38875
+  ],
+  "leadChanges": 3.93,
+  "winnerAheadR5": 0.385,
+  "winnerAheadR10": 0.66,
+  "stations": 35.38625,
+  "mergers": 2.50875,
+  "takeovers": 3.62125,
+  "sells": 0,
+  "margin": 0.10738257941224605
+ },
+ "selling": {
+  "label": "+ selling, automatic dividends",
+  "seats": [
+   0.28875,
+   0.25,
+   0.46125
+  ],
+  "leadChanges": 3.4825,
+  "winnerAheadR5": 0.4375,
+  "winnerAheadR10": 0.77625,
+  "stations": 35.495,
+  "mergers": 2.77,
+  "takeovers": 0,
+  "sells": 0.09625,
+  "margin": 0.15067489735266879
+ },
+ "sellingMarket": {
+  "label": "+ selling at market price, automatic dividends",
+  "seats": [
+   0.28375,
+   0.26,
+   0.45625
+  ],
+  "leadChanges": 3.49125,
+  "winnerAheadR5": 0.43875,
+  "winnerAheadR10": 0.7575,
+  "stations": 35.56125,
+  "mergers": 2.77625,
+  "takeovers": 0,
+  "sells": 0.6175,
+  "margin": 0.14816920308648787
+ },
+ "events": {
+  "label": "+ city events deck",
+  "seats": [
+   0.305,
+   0.38,
+   0.315
+  ],
+  "leadChanges": 4.3525,
+  "winnerAheadR5": 0.3975,
+  "winnerAheadR10": 0.61,
+  "stations": 39.94125,
+  "mergers": 3.17375,
+  "takeovers": 0,
+  "sells": 0,
+  "margin": 0.08583886193336487
+ },
+ "all3": {
+  "label": "+ all three",
+  "seats": [
+   0.3125,
+   0.29,
+   0.3975
+  ],
+  "leadChanges": 3.67625,
+  "winnerAheadR5": 0.4875,
+  "winnerAheadR10": 0.72875,
+  "stations": 39.7675,
+  "mergers": 3.11625,
+  "takeovers": 4.45375,
+  "sells": 1.15125,
+  "margin": 0.14670116933461133
+ }
+}

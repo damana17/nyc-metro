@@ -100,7 +100,7 @@ function candidates(g, th, allow) {
   }
   if (ok("station")) for (let l = 0; l < E.NL; l++) {
     const L = E.line(g, l); let best = null;
-    for (const h of L.net) { if (g.stations.has(h)) continue; const c = E.stationCost(g, h); if (c <= p.hand[l] && (!best || c < best.c || (c === best.c && g.R() < 0.5))) best = { h, c }; }
+    for (const h of L.net) { if (g.stations.has(h)) continue; if (!E.canDo(g, { t: "station", l, h })) continue; const c = E.effStationCost(g, h); if (c <= p.hand[l] && (!best || c < best.c || (c === best.c && g.R() < 0.5))) best = { h, c }; }
     if (best && S.merges && big(l) && [...L.net].some((h) => touches(l, h))) { real({ t: "station", l, h: best.h }); continue; }
     if (best) push({ t: "station", l, h: best.h }, (a) => { a.players[me].hand -= best.c; a.D[l] += S.perStation; a.room[l] = Math.min(Math.max(0, L.sites - 1), 4); });
   }
@@ -114,6 +114,15 @@ function candidates(g, th, allow) {
     push({ t: "invest", l, wild }, (a) => {
       const q = a.players[me]; q.cash -= price; q.shares[l]++; q.hand -= wild ? S.wildCost : 1;
       a.sold[l]++; if (mtm) a.T[l] += S.stepPerShare;
+    });
+  }
+  if (S.sellShares && (!allow || allow.includes("invest"))) for (let l = 0; l < E.NL; l++) {
+    if (g.dead[l] || !p.shares[l]) continue;
+    push({ t: "sell", l }, (a) => {
+      const q = a.players[me]; a.sold[l]--; q.shares[l]--;
+      q.cash += S.sellAt === "market" ? a.prices[l] + a.sold[l] * S.stepPerShare : a.prices[l];
+      const drop = Math.min(S.sellDrop, a.prices[l] - 1); a.prices[l] -= drop;
+      if (S.scoring === "mtm") a.T[l] -= S.stepPerShare + drop; else if (S.scoring !== "cash") a.T[l] -= drop;
     });
   }
   if (ok("div") && S.divOne) for (let l = 0; l < E.NL; l++) {

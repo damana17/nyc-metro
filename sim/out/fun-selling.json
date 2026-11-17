@@ -1,0 +1,73 @@
+{
+ "selling": {
+  "label": "+ selling, automatic dividends",
+  "settings": {
+   "scoring": "acq",
+   "merges": true,
+   "mergeAt": 4,
+   "safeAt": 8,
+   "rotateStart": true,
+   "investPerTurn": 1,
+   "goals": true,
+   "goalsPublic": 3,
+   "goalBonus": 30,
+   "goalPrice": 5,
+   "secretRoutes": 2,
+   "secretValue": 30,
+   "sellShares": true,
+   "autoDiv": true
+  },
+  "theta": {
+   "phi": 0.22691387743747327,
+   "wDisc": 1.92903283055639,
+   "wPot": 3.0712885789922435,
+   "lambda": 0.10446110501390651,
+   "noise": 2.895851345792762
+  },
+  "games": 800,
+  "seats": [
+   0.29125,
+   0.23375,
+   0.475
+  ],
+  "leadChanges": 3.44375,
+  "lockRound": 7.9675,
+  "margin": 0.14636233951497868,
+  "winnerAheadR5": 0.43,
+  "winnerAheadR10": 0.82625,
+  "mergers": 0.98375,
+  "gamesWithMerge": 0.47875,
+  "firstMergeRound": 10.065274151436032,
+  "mergeBonusShare": 0.05828574707105719,
+  "divShare": 0.23164127703187135,
+  "contested": 5.995,
+  "cos": 0.7393338133999174,
+  "stations": 25.31625,
+  "track": 45.11875,
+  "divCalls": 15,
+  "lookaheadWin": 0.525,
+  "lookaheadSE": 0.02496873044429772,
+  "lookaheadGames": 400,
+  "winnerLeading": [
+   0.27875,
+   0.39125,
+   0.3325,
+   0.52,
+   0.43,
+   0.6375,
+   0.75875,
+   0.77625,
+   0.81125,
+   0.82625,
+   0.83625,
+   0.86875,
+   0.88,
+   0.9025,
+   0.98625
+  ],
+  "takeovers": 0,
+  "blocks": 0,
+  "sells": 0,
+  "lookaheadMargin": 0.1916666666666667
+ }
+}

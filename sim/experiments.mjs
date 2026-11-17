@@ -54,6 +54,7 @@ function measure(g) {
     traj: H.map((h) => h.scores),
     mergers: g.stats.mergers.length, mergeRounds: g.stats.mergers.map((m) => m.round), mergeBonus: g.stats.mergeBonus,
     contested: lines.filter((x) => x.owners >= 2).length,
+    takeovers: g.stats.takeovers || 0, blocks: g.stats.blocks || 0, sells: g.stats.sells || 0,
   };
 }
 
@@ -215,6 +216,8 @@ const exps = {
         stations: s.stations, track: s.track, divCalls: s.divCalls,
         lookaheadWin: sl.winRate.lookahead.rate, lookaheadSE: sl.winRate.lookahead.se, lookaheadGames: L.ms.length,
         winnerLeading: Array.from({ length: 15 }, (_, r) => lead(r + 1)),
+        takeovers: mean(ms.map((m) => m.takeovers)), blocks: mean(ms.map((m) => m.blocks)), sells: mean(ms.map((m) => m.sells)),
+        lookaheadMargin: sl.winRate.lookahead.rate - 1 / 3,
       };
       process.stdout.write(`fun ${v} done\n`);
     }

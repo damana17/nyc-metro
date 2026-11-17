@@ -56,7 +56,74 @@ export const DEFAULTS = { ...V2D, strict: true, autoAP: true, players: 3, scorin
   safeAt: 0,            // if set, a line with this many stations can never be absorbed (Acquire's "safe" chain)
   /* owned dividends: the caller names ONE line; only that line pays and only its price rises */
   divOne: false,
+  /* idea 1, directors: a line's biggest holder (no tie) directs it. Only the director may build its
+     stations; anyone may lay its track. When the line is about to be absorbed, its director may spend
+     resistDiscs of its colour to block the merge until the end of the next round. */
+  directors: false, resistDiscs: 3,
+  /* idea 2, selling: sell a share back at the line's base price (uses the market slot like buying,
+     same per-turn limit); each sale lowers the base price by sellDrop. Paired with autoDiv: every line
+     pays out at the end of every round and the "call dividends" action is gone. */
+  sellShares: false, sellDrop: 5, autoDiv: false,
+  sellAt: "base",       // base: sell for the base price | market: sell for the current price (base + step × shares out, after this sale)
+  /* idea 3, a city events deck: one card per round, the next one visible */
+  events: false,
 };
+
+/* ── idea 3: the events deck ───────────────────────────────────────── */
+export const EVENTS = {
+  quiet: { name: "A quiet year", n: 3 },
+  irt: { name: "1904: the IRT opens (stations cost 1 disc less)", n: 2 },
+  depression: { name: "Great Depression (this round's dividends are halved)", n: 1 },
+  moses: { name: "Robert Moses builds highways (no new stations in Queens for two rounds)", n: 1 },
+  fiscal: { name: "1975 fiscal crisis (every base price drops $5)", n: 1 },
+  boom: { name: "Ridership boom (+$1 a share this round on lines serving Midtown)", n: 2 },
+  bonds: { name: "Transit bond issue (every player gets $20)", n: 1 },
+  strike: { name: "Transit strike (one line pays nothing this round)", n: 2 },
+  expansion: { name: "City expansion (every player draws 2 discs)", n: 1 },
+  fire: { name: "Station fire (the biggest line loses a station)", n: 1 },
+};
+const QUEENS = new Set([5, 6, 7, 8]), MIDTOWN = 3;
+function startRoundEvent(g) {
+  if (!g.S.events || !g.ev) return;
+  g.mods = {};
+  const id = g.ev.deck[g.turn.round - 1];
+  if (!id) return;
+  g.stats.events.push(id);
+  const live = Array.from({ length: NL }, (_, l) => l).filter((l) => !g.dead[l]);
+  switch (id) {
+    case "irt": g.mods.stationDiscount = 1; break;
+    case "depression": g.mods.divMult = 0.5; break;
+    case "moses": g.ev.mosesUntil = g.turn.round + 1; break;
+    case "fiscal": live.forEach((l) => { g.prices[l] = Math.max(5, g.prices[l] - 5); }); break;
+    case "boom": g.mods.boom = true; break;
+    case "bonds": g.players.forEach((p) => { p.cash += 20; }); break;
+    case "strike": g.mods.strike = live[Math.floor(g.R() * live.length)]; break;
+    case "expansion": g.players.forEach((p) => { for (let i = 0; i < 2 && handSize(p) < g.S.handLimit; i++) { const d = drawDisc(g); if (d >= 0) p.hand[d]++; } }); break;
+    case "fire": {
+      const big = live.sort((a, b) => line(g, b).stations - line(g, a).stations)[0];
+      const own = [...g.stations].filter(([, o]) => o === big).map(([h]) => h);
+      if (own.length > 1) { g.stations.delete(own[Math.floor(g.R() * own.length)]); touch(g); syncMarkers(g); }
+      break;
+    }
+  }
+}
+export const effStationCost = (g, h) => Math.max(0, stationCost(g, h) - ((g.mods && g.mods.stationDiscount) || 0));
+const stationBlocked = (g, h) => g.S.events && g.ev && g.ev.mosesUntil >= g.turn.round && QUEENS.has(ZONE[h]);
+
+/* ── idea 1: directors ─────────────────────────────────────────────── */
+export function director(g, l) {
+  let best = -1, top = 0, tie = false;
+  g.players.forEach((p, i) => { if (p.shares[l] > top) { top = p.shares[l]; best = i; tie = false; } else if (p.shares[l] === top && top > 0) tie = true; });
+  return tie ? -1 : best;
+}
+function noteDirectors(g) {
+  if (!g.S.directors) return;
+  for (let l = 0; l < NL; l++) {
+    const d = director(g, l);
+    if (g.dirs[l] >= 0 && d >= 0 && d !== g.dirs[l]) g.stats.takeovers++;
+    if (d >= 0) g.dirs[l] = d;
+  }
+}
 
 export function newGame(over = {}, seed = 1) {
   const S = { ...DEFAULTS, ...over };
@@ -69,7 +136,9 @@ export function newGame(over = {}, seed = 1) {
     players: [], prices: Array(NL).fill(S.startPrice), sold: Array(NL).fill(0),
     turn: { active: 0, ap: S.apPerTurn, round: 1, invests: 0, usedSlot: false, n: 0, k: 0, start: 0 },
     over: false, ver: 0, cache: Array(NL).fill(null), dead: Array(NL).fill(false),
-    stats: { divCalls: 0, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0 },
+    stats: { divCalls: 0, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0,
+             takeovers: 0, blocks: 0, events: [], sells: 0 },
+    dirs: Array(NL).fill(-1), blocked: {}, mods: {},
   };
   for (let i = 0; i < S.players; i++) {
     const p = { id: i, cash: S.startCash + (S.seatCash ? S.seatCash * i : 0), hand: Array(NL).fill(0), shares: Array(NL).fill(0), divIncome: 0, spent: 0 };
@@ -87,6 +156,13 @@ export function newGame(over = {}, seed = 1) {
     g.goals = { public: pub, done: {} };
     g.secrets = g.players.map((p, i) => Array.from({ length: S.secretRoutes }, (_, k) => rest[(i * S.secretRoutes + k) % rest.length]));
     g.stats.goals = [];
+  }
+  if (S.events) {
+    const deck = [];
+    Object.entries(EVENTS).forEach(([id, e]) => { for (let i = 0; i < e.n; i++) deck.push(id); });
+    for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    g.ev = { deck, mosesUntil: 0 };
+    startRoundEvent(g);
   }
   return g;
 }
@@ -217,12 +293,18 @@ export function canDo(g, a) {
     if (T.invests >= (T.round === 1 && S.firstRoundInvest ? S.firstRoundInvest : S.investPerTurn)) return false;
     if (!T.usedSlot && T.ap < 1) return false;
     if (T.usedSlot && T.invests === 0) return false;       // the slot went to dividends
+  } else if (a.t === "sell") {
+    if (!S.sellShares || T.invests >= S.investPerTurn) return false;
+    if (!T.usedSlot && T.ap < 1) return false;
+    if (T.usedSlot && T.invests === 0) return false;
   } else if (T.ap < 1) return false;
   switch (a.t) {
     case "track": return canPayArr(p, trackNeed(a.l, a));
     case "station": {
       if (g.stations.has(a.h) || !line(g, a.l).net.has(a.h)) return false;
-      return p.hand[a.l] >= stationCost(g, a.h);
+      if (S.directors) { const d = director(g, a.l); if (d >= 0 && d !== T.active) return false; }
+      if (stationBlocked(g, a.h)) return false;
+      return p.hand[a.l] >= effStationCost(g, a.h);
     }
     case "draw": return true;
     case "invest": {
@@ -230,7 +312,8 @@ export function canDo(g, a) {
       if (a.wild) return handSize(p) >= S.wildCost;
       return p.hand[a.l] >= 1;
     }
-    case "div": return !T.usedSlot && (!S.divOne || (a.l !== undefined && !g.dead[a.l]));
+    case "div": return !S.autoDiv && !T.usedSlot && (!S.divOne || (a.l !== undefined && !g.dead[a.l]));
+    case "sell": return !g.dead[a.l] && p.shares[a.l] > 0;
   }
   return false;
 }
@@ -248,7 +331,7 @@ export function apply(g, a) {
       T.ap -= 1; break;
     }
     case "station": {
-      const c = stationCost(g, a.h), burn = Math.min(c, burnCount(g, c));
+      const c = effStationCost(g, a.h), burn = Math.min(c, burnCount(g, c));
       p.hand[a.l] -= c; g.burned += burn; g.bag[a.l] += c - burn;
       g.stations.set(a.h, a.l); touch(g); syncMarkers(g);
       if (S.merges) checkMerges(g, a.l);
@@ -274,13 +357,17 @@ export function apply(g, a) {
       } else { p.hand[a.l]--; g.bag[a.l]++; }
       p.cash -= price; p.spent += price; p.shares[a.l]++; g.sold[a.l]++;
       if (!T.usedSlot) { T.usedSlot = true; T.ap -= 1; }
-      T.invests++; break;
+      T.invests++; noteDirectors(g); break;
+    }
+    case "sell": {
+      g.sold[a.l]--; p.shares[a.l]--;
+      p.cash += S.sellAt === "market" ? g.prices[a.l] + g.sold[a.l] * S.stepPerShare : g.prices[a.l];
+      g.prices[a.l] = Math.max(1, g.prices[a.l] - S.sellDrop);
+      if (!T.usedSlot) { T.usedSlot = true; T.ap -= 1; }
+      T.invests++; g.stats.sells++; noteDirectors(g); break;
     }
     case "div": {
-      const ps = []; for (let l = 0; l < NL; l++) ps.push(S.divOne && l !== a.l ? 0 : perShare(g, l));
-      g.players.forEach((q) => { let paid = 0; for (let l = 0; l < NL; l++) paid += q.shares[l] * ps[l]; q.cash += paid; q.divIncome += paid; g.stats.divPaid += paid; });
-      for (let l = 0; l < NL; l++) g.prices[l] += Math.round(ps[l] * S.priceGrowth);
-      g.stats.divCalls++;
+      payDividends(g, S.divOne ? a.l : undefined);
       T.usedSlot = true; T.ap -= 1; break;
     }
     case "end": endTurn(g); return;
@@ -298,6 +385,7 @@ export function checkMerges(g, l) {
         const na = line(g, a).net, nb = line(g, b).net;
         let touchHex = false; for (const h of na) if (nb.has(h)) { touchHex = true; break; }
         if (touchHex && g.S.safeAt && line(g, a).stations >= g.S.safeAt && line(g, b).stations >= g.S.safeAt) continue;
+        if (touchHex && g.blocked[`${a}-${b}`] >= g.turn.round) continue;
         if (touchHex) { pair = [a, b]; break; }
       }
     }
@@ -306,8 +394,37 @@ export function checkMerges(g, l) {
     const big = A.stations !== B.stations ? (A.stations > B.stations ? a : b)
               : A.edges.length !== B.edges.length ? (A.edges.length > B.edges.length ? a : b)
               : (a === l ? a : b === l ? b : a);
-    merge(g, big, big === a ? b : a);
+    const small = big === a ? b : a;
+    if (g.S.directors && resists(g, small)) {
+      const d = director(g, small);
+      g.players[d].hand[small] -= g.S.resistDiscs; g.bag[small] += g.S.resistDiscs;
+      g.blocked[`${a}-${b}`] = g.turn.round + 1; g.stats.blocks++;
+      continue;
+    }
+    merge(g, big, small);
   }
+}
+/* the absorbed line's director blocks if keeping the line looks worth more than cashing out now */
+function resists(g, D) {
+  const d = director(g, D); if (d < 0) return false;
+  const p = g.players[d]; if (p.hand[D] < g.S.resistDiscs) return false;
+  const roundsLeft = g.S.roundLimit - g.turn.round + 1;
+  const keep = p.shares[D] * perShare(g, D) * roundsLeft * 1.3;
+  const P = g.prices[D], take = p.shares[D] * P + g.S.majBonus * P;
+  return keep > take;
+}
+export function payDividends(g, only) {
+  const S = g.S, m = g.mods || {}, ps = [];
+  for (let l = 0; l < NL; l++) {
+    let v = (only !== undefined && l !== only) || g.dead[l] ? 0 : perShare(g, l);
+    if (m.strike === l) v = 0;
+    if (v && m.boom && line(g, l).zones.has(MIDTOWN)) v += 1;
+    if (m.divMult) v = Math.floor(v * m.divMult);
+    ps.push(v);
+  }
+  g.players.forEach((q) => { let paid = 0; for (let l = 0; l < NL; l++) paid += q.shares[l] * ps[l]; q.cash += paid; q.divIncome += paid; g.stats.divPaid += paid; });
+  for (let l = 0; l < NL; l++) g.prices[l] += Math.round(ps[l] * S.priceGrowth);
+  g.stats.divCalls++;
 }
 export function merge(g, A, D) {
   const S = g.S, P = g.prices[D];
@@ -342,7 +459,9 @@ export function cloneGame(g) {
     players: g.players.map((p) => ({ ...p, hand: [...p.hand], shares: [...p.shares] })), prices: [...g.prices], sold: [...g.sold],
     turn: { ...g.turn }, over: g.over, ver: g.ver, cache: Array(NL).fill(null), dead: [...g.dead],
     goals: g.goals ? { public: g.goals.public, done: { ...g.goals.done } } : undefined, secrets: g.secrets,
-    stats: { divCalls: g.stats.divCalls, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0, goals: [] },
+    dirs: [...(g.dirs || [])], blocked: { ...(g.blocked || {}) }, mods: { ...(g.mods || {}) }, ev: g.ev ? { ...g.ev } : undefined,
+    stats: { divCalls: g.stats.divCalls, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0, goals: [],
+             takeovers: 0, blocks: 0, events: [], sells: 0 },
   };
 }
 
@@ -350,7 +469,11 @@ export function endTurn(g) {
   const T = g.turn, n = g.players.length;
   g.stats.history.push(snapshot(g));
   T.k++; T.n++;
-  if (T.k >= n) { T.k = 0; T.round += 1; if (g.S.rotateStart) T.start = (T.start + 1) % n; }
+  if (T.k >= n) {
+    if (g.S.autoDiv) payDividends(g);
+    T.k = 0; T.round += 1; if (g.S.rotateStart) T.start = (T.start + 1) % n;
+    if (T.round <= g.S.roundLimit) startRoundEvent(g);
+  }
   const k = g.S.snake && T.round % 2 === 0 ? n - 1 - T.k : T.k;
   T.active = (T.start + k) % n; T.ap = g.S.apPerTurn; T.invests = 0; T.usedSlot = false;
   if (T.round > g.S.roundLimit) g.over = true;
