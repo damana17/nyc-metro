@@ -10,6 +10,7 @@ import {
   nearestStation, stationCost, burnCount,
   pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
   nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore, dealGoals,
+  startingCash, untouched,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -441,7 +442,7 @@ export default function GameInfluence({ hidden, slot }) {
           <Check checked={!!S.autoAP} onChange={(v) => commit((s2) => { s2.settings.autoAP = v; })}>Spend action points automatically</Check>
           <div className="my-1.5 border-t border-[#E2E1DB]" />
           <Item onClick={() => { if (!confirm(room ? `Start a new game at table "${room}"? This resets the board for everyone.` : "Start a new game?")) return;
-                                 commit(() => { const f = makeV2(S); f.settings = { ...S }; f.players = f.players.map((p, i) => state.players[i] ? { ...p, name: state.players[i].name } : p); return f; }, "started a new game"); }}>
+                                 commit(() => { const f = makeV2(S, state.players.length); f.settings = { ...S }; f.players = f.players.map((p, i) => state.players[i] ? { ...p, name: state.players[i].name } : p); return f; }, "started a new game"); }}>
             New game</Item>
           {room && <Item onClick={() => { if (confirm("Leave this table? You can rejoin with the same code.")) join(""); }}>Leave table</Item>}
           {room && backend === "local" && <div className="px-4 py-2 text-[12px] text-[#8A5A00] bg-[#FFF6DB] mx-2 mt-1 rounded-md">{syncDot[1]}</div>}
@@ -523,6 +524,7 @@ export default function GameInfluence({ hidden, slot }) {
             {N("Secret route value ($)", "secretValue", 5)}
             {N("Wild share costs", "wildCost", 1, "disc")}
             {N("Starting cash", "startCash", 10)}
+            {N("With 4+ players, extra starting cash per later seat", "seatCash4", 5)}
             {N("$ per station", "perStation")}
             {N("$ per zone", "perZone")}
             {N("Merge when both lines have (stations)", "mergeAt")}
@@ -928,7 +930,12 @@ export default function GameInfluence({ hidden, slot }) {
                 );
               })}
               <button onClick={() => commit((s) => { const ids = s.players.map((p) => p.id); let i = 0; while (ids.includes(i)) i++;
-                        const q = v2Player(i, s.settings); for (let n = 0; n < s.settings.startingHand && s.bag.length; n++) q.hand.push(s.bag.pop()); s.players.push(q); }, "added an investor")}
+                        const fresh = untouched(s), n2 = s.players.length + 1;
+                        const q = v2Player(i, s.settings, n2); q.cash = startingCash(s.settings, s.players.length, n2);
+                        for (let n = 0; n < s.settings.startingHand && s.bag.length; n++) q.hand.push(s.bag.pop()); s.players.push(q);
+                        // before anyone has acted, re-deal starting cash so seat order sets it (4+ players: $60/$70/$80/$90)
+                        if (fresh) s.players.forEach((p, k) => { p.cash = startingCash(s.settings, k, n2); });
+                      }, "added an investor")}
                       className={btn + " w-full"}>+ Add investor</button>
             </div>
           )}

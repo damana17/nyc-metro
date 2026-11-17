@@ -381,6 +381,7 @@ export const V2D = {
   sharesPerLine: 25,        // Acquire uses 25
   startPrice: 10, stepPerShare: 15, priceGrowth: 1,
   investPerTurn: 1, wildCost: 2, startCash: 60,
+  seatCash4: 10,            // with 4 or more players, each later seat starts with this much more ($60/$70/$80/$90)
   /* dividends */
   perStation: 1, perZone: 1,
   /* merges: two lines whose networks touch, both with at least mergeAt stations, merge. The line with
@@ -399,12 +400,17 @@ export const shuffleBag = () => {
   for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
   return bag;
 };
-export const v2Player = (i, S) => ({ id: i, name: `Player ${i + 1}`, cash: S.startCash, hand: [], shares: {} });
-export const makeV2 = (over = {}) => {
+/* starting cash for seat i (0-based) in a game of n players: later seats get more at 4+ players,
+   because the last seat otherwise pays the most for the first shares and rarely recovers */
+export const startingCash = (S, i, n) => S.startCash + (n >= 4 ? (S.seatCash4 ?? 0) * i : 0);
+export const v2Player = (i, S, n = 3) => ({ id: i, name: `Player ${i + 1}`, cash: startingCash(S, i, n), hand: [], shares: {} });
+/* has anyone acted yet? starting cash may only be re-dealt before the first share is bought */
+export const untouched = (s) => s.turn.round === 1 && Object.values(s.sold || {}).every((x) => !x) && !(s.record || []).some((m) => /^(bought|called|laid|built)/.test(m.note || ""));
+export const makeV2 = (over = {}, n = 3) => {
   const S = { ...V2D, ...over };
   const map = seedMap();
   const bag = shuffleBag();
-  const players = [v2Player(0, S), v2Player(1, S), v2Player(2, S)];
+  const players = Array.from({ length: Math.max(2, n) }, (_, i) => v2Player(i, S, Math.max(2, n)));
   players.forEach((p) => { for (let i = 0; i < S.startingHand && bag.length; i++) p.hand.push(bag.pop()); });
   // lines start at the map's NAMED locations — the landmarks, not blank hexes
   const named = Object.keys(map.names || {}).filter((h) => map.hexes[h]);

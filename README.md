@@ -47,6 +47,7 @@ For multiplayer, add two repository **Variables** (Settings → Secrets and vari
 
 ## Playtest features
 
+- **Starting cash by seat**: with 4 or more players each later seat starts with $10 more ($60/$70/$80/$90). In simulation that took the 4th seat from 7% of wins to 26%. With 3 players everyone starts with $60, because the same bonus there overshoots. Adding the 4th investor before anyone has bought a share re-deals the cash.
 - **Turn order** (Tuning): rotate (default: the start player moves one seat left each round), snake, or fixed. With **1 share per turn** (default) this was the fairest combination in simulation once merges were in: 37 / 30 / 34 win rate by seat at 3 players. At 4 players the last seat is still weak.
 - **Score**: the Tally is the final score. Shares count at their **base price** (without the per-sale step, which used to let you score by buying anything), plus **end-of-game holder bonuses** on every line still running, plus **secret routes**.
 - **Merge watch**: the Lines table shows who leads each line (majority / minority), a SAFE IN n tag as a line nears the safe size, and ⚡ marks hexes where one more track would make two lines touch.
