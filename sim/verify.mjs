@@ -67,6 +67,7 @@ for (let seed = 1; seed <= 300; seed++) {
       eq([...E.line(g, x).zones].sort(), [...App.zonesOf(st, x)].sort(), `zones l${x}`);
       const mine = Object.fromEntries(E.legalTrack(g, x).map((o) => [o.k, { toll: o.toll, water: o.water, target: o.to }]));
       const app = appLegal(st, g.S, map, x);
+      eq(Object.keys(App.legalExtensions({ ...st, settings: g.S }, x)).sort(), Object.keys(app).sort(), `shared legalExtensions l${x}`);
       eq(Object.keys(mine).sort(), Object.keys(app).sort(), `legal edges l${x}`);
       Object.keys(app).forEach((k) => { if (mine[k]) eq(mine[k], app[k], `legal detail ${k}`); });
     }

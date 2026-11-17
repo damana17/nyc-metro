@@ -358,6 +358,13 @@ export function Charter({ p, S, isActive, commit, edit, syncNow, onComplete, net
 export const V2D = {
   /* turn */
   apPerTurn: 5, roundLimit: 15, handLimit: 10, drawCount: 3, startingHand: 10,
+  turnOrder: "rotate",      // fixed (1-2-3 every round) | snake (1-2-3, 3-2-1, ...) | rotate (start player moves left each round)
+  /* scoring */
+  endBonuses: true,         // at the end, each live line pays its biggest holders the merge bonuses (majBonus/minBonus × base price)
+  /* landmark goals */
+  goals: true,              // public goals: first line to link two landmarks pays the player who completes it
+  goalsPublic: 3, goalBonus: 30, goalPrice: 5,
+  secretRoutes: 2, secretValue: 30,   // each player's hidden routes, worth secretValue each at the end if one line links them
   /* track */
   ownership: "link",        // link = one disc per stretch (Age of Steam) | hex = one per tile
   branchAt: 3,              // how many track ends a line may have at its OWN station
@@ -373,7 +380,7 @@ export const V2D = {
   /* shares */
   sharesPerLine: 25,        // Acquire uses 25
   startPrice: 10, stepPerShare: 15, priceGrowth: 1,
-  investPerTurn: 3, wildCost: 2, startCash: 60,
+  investPerTurn: 1, wildCost: 2, startCash: 60,
   /* dividends */
   perStation: 1, perZone: 1,
   /* merges: two lines whose networks touch, both with at least mergeAt stations, merge. The line with
@@ -410,9 +417,11 @@ export const makeV2 = (over = {}) => {
   LINES.forEach((l, i) => { const h = picks[i]; if (h) stations[h] = { o: l.id }; });
   const prices = {}, sold = {};
   LINES.forEach((l) => { prices[l.id] = S.startPrice; sold[l.id] = 0; });
-  return { v: 0, map, track: {}, stations, bag, burned: [], onboard: [], players, prices, sold,
-           turn: { active: 0, ap: S.apPerTurn, round: 1, invests: 0, usedSlot: false },
+  const g = { v: 0, map, track: {}, stations, bag, burned: [], onboard: [], players, prices, sold,
+           turn: { active: 0, ap: S.apPerTurn, round: 1, invests: 0, usedSlot: false, k: 0, start: 0 },
            settings: S, log: [] };
+  dealGoals(g);
+  return g;
 };
 
 /* ── pure helpers over a state object ─────────────────────── */
@@ -544,4 +553,135 @@ export function applyMerge(s, a, d) {
   s.defunct = [...(s.defunct || []), d];
   s.mergers = [...(s.mergers || []), { round: s.turn?.round, a, d, pays: pays.filter((x) => x.bonus || x.sale).map((x) => ({ id: x.id, bonus: x.bonus, sale: x.sale })) }];
   return pays;
+}
+
+/* ── turn order ──────────────────────────────────────────── */
+/* who goes next. turn.k counts turns within the round; turn.start is the round's first seat */
+export function nextTurn(s) {
+  const T = s.turn, n = s.players.length || 1, order = s.settings.turnOrder || "fixed";
+  if (T.k === undefined) { T.k = Math.max(0, s.players.findIndex((p) => p.id === T.active)); T.start = 0; }
+  T.k += 1;
+  if (T.k >= n) { T.k = 0; T.round += 1; if (order === "rotate") T.start = ((T.start || 0) + 1) % n; }
+  const k = order === "snake" && T.round % 2 === 0 ? n - 1 - T.k : T.k;
+  T.active = s.players[((T.start || 0) + k) % n].id;
+  T.ap = s.settings.apPerTurn; T.invests = 0; T.usedSlot = false;
+}
+
+/* ── legal track, shared by the board and the merge watch ── */
+export function legalExtensions(state, lid) {
+  const S = state.settings, map = state.map, out = {};
+  const net = lineNet(state, lid), deg = lineDegree(state, lid);
+  const cap = (h) => (state.stations[h]?.o === lid ? S.branchAt : 2);
+  net.forEach((h) => {
+    if ((deg[h] || 0) >= cap(h)) return;
+    const [c, r] = parseId(h);
+    neighbors(c, r).forEach(([nc, nr]) => {
+      const m = `${nc},${nr}`;
+      if (!map.hexes[m]) return;
+      const k = edgeKey(h, m);
+      if ((map.nocross || []).includes(k)) return;
+      if (state.track[k]) return;
+      if ((deg[m] || 0) >= cap(m)) return;
+      let toll = [];
+      if (S.crossMode !== "free") {
+        const foreign = new Set();
+        [h, m].forEach((x) => { if (!state.stations[x]) occupants(state, x).forEach((o) => { if (o !== lid) foreign.add(o); }); });
+        if (foreign.size) {
+          if (S.crossMode === "station") return;
+          toll = S.crossPay === "own" ? [[lid, S.crossDiscs]] : [...foreign].map((o) => [o, S.crossDiscs]);
+        }
+      }
+      const water = map.hexes[m] === "w" ? S.waterExtra : 0;
+      out[k] = { toll, water, target: m };
+    });
+  });
+  return out;
+}
+
+/* hexes where one more piece of track would make two lines touch, for pairs that are at or near the merge size */
+export function collisionWatch(s) {
+  const S = s.settings, at = S.mergeAt ?? 4, safe = S.safeAt ?? 0, live = liveLines(s).map((l) => l.id), out = [];
+  const nets = Object.fromEntries(live.map((l) => [l, lineNet(s, l)]));
+  for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+    const a = live[i], b = live[j], sa = stationsOf(s, a), sb = stationsOf(s, b);
+    if (sa < at - 1 || sb < at - 1) continue;
+    if (safe && sa >= safe && sb >= safe) continue;
+    if ([...nets[a]].some((h) => nets[b].has(h))) continue;          // already touching: that's a merge or a near one
+    const hexes = new Set();
+    Object.values(legalExtensions(s, a)).forEach((x) => { if (nets[b].has(x.target)) hexes.add(x.target); });
+    Object.values(legalExtensions(s, b)).forEach((x) => { if (nets[a].has(x.target)) hexes.add(x.target); });
+    if (hexes.size) out.push({ a, b, sa, sb, hexes: [...hexes], ready: sa >= at && sb >= at });
+  }
+  return out;
+}
+
+/* biggest and second-biggest holders of a line, for the Lines table */
+export function holders(s, lid) {
+  const rows = s.players.map((p) => ({ id: p.id, name: p.name, n: p.shares?.[lid] || 0 })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+  if (!rows.length) return { major: [], minor: [] };
+  const major = rows.filter((x) => x.n === rows[0].n);
+  const rest = rows.filter((x) => x.n < rows[0].n);
+  const minor = major.length > 1 ? [] : rest.filter((x) => x.n === rest[0]?.n);
+  return { major, minor };
+}
+
+/* ── landmark goals ──────────────────────────────────────── */
+export const GOALS = [
+  { id: "airports", a: "5,2", b: "10,6", name: "The airports: LGA and JFK" },
+  { id: "jamaica", a: "1,5", b: "8,4", name: "Grand Central to Jamaica Station" },
+  { id: "spine", a: "2,8", b: "0,-1", name: "Battery Park to Van Cortland Park" },
+  { id: "coney", a: "0,5", b: "6,12", name: "Penn Station to Coney Island" },
+  { id: "bronx", a: "0,0", b: "5,-1", name: "Inwood to Pelham Bay Park" },
+  { id: "beach", a: "4,8", b: "9,9", name: "Atlantic Ave to the Rockaways" },
+  { id: "museums", a: "0,3", b: "1,3", name: "Natural History to the Met, around the park" },
+  { id: "ferry", a: "1,10", b: "2,8", name: "Staten Island to Battery Park" },
+  { id: "commuter", a: "-1,5", b: "11,2", name: "New Jersey to Long Island" },
+  { id: "park", a: "4,9", b: "1,5", name: "Prospect Park to Grand Central" },
+];
+export const goalById = (id) => GOALS.find((g) => g.id === id);
+export const goalLine = (s, goal) => liveLines(s).map((l) => l.id).find((l) => { const n = lineNet(s, l); return n.has(goal.a) && n.has(goal.b); });
+
+export function dealGoals(s) {
+  const pool = GOALS.map((g) => g.id);
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const S = s.settings, pub = pool.slice(0, S.goalsPublic ?? 3), rest = pool.slice(pub.length);
+  s.goals = { public: pub, done: {} };
+  s.secrets = {};
+  s.players.forEach((p, i) => { s.secrets[p.id] = Array.from({ length: S.secretRoutes ?? 2 }, (_, k) => rest[(i * (S.secretRoutes ?? 2) + k) % Math.max(1, rest.length)]).filter(Boolean); });
+}
+
+/* award any public goal a line has just completed; returns the notes */
+export function checkGoals(s, byId) {
+  if (!s.settings.goals || !s.goals) return [];
+  const notes = [];
+  s.goals.public.forEach((id) => {
+    if (s.goals.done[id]) return;
+    const g = goalById(id), l = goalLine(s, g);
+    if (l === undefined) return;
+    const p = s.players.find((x) => x.id === byId);
+    if (p) p.cash += s.settings.goalBonus;
+    s.prices[l] = (s.prices[l] ?? s.settings.startPrice) + s.settings.goalPrice;
+    s.goals.done[id] = { line: l, by: byId, round: s.turn?.round };
+    notes.push(`${lineOf(l)?.name} completed "${g.name}"`);
+  });
+  return notes;
+}
+
+/* ── the final score ─────────────────────────────────────── */
+/* cash + each share at its base price + end-of-game holder bonuses on live lines + secret routes linked */
+export function finalScore(s) {
+  const S = s.settings, maj = S.majBonus ?? 5, min = S.minBonus ?? 2;
+  const rows = s.players.map((p) => ({ id: p.id, name: p.name, cash: p.cash || 0, shares: 0, bonuses: 0, routes: 0, routeCount: 0 }));
+  const live = liveLines(s).map((l) => l.id);
+  live.forEach((l) => {
+    const P = s.prices?.[l] ?? S.startPrice;
+    rows.forEach((r) => { r.shares += (s.players.find((p) => p.id === r.id).shares?.[l] || 0) * P; });
+    if (!S.endBonuses) return;
+    mergePayouts(s, l).forEach((x) => { const r = rows.find((y) => y.id === x.id); if (r) r.bonuses += x.bonus; });
+  });
+  if (S.goals && s.secrets) rows.forEach((r) => {
+    (s.secrets[r.id] || []).forEach((id) => { if (goalLine(s, goalById(id)) !== undefined) { r.routes += S.secretValue; r.routeCount += 1; } });
+  });
+  rows.forEach((r) => { r.total = r.cash + r.shares + r.bonuses + r.routes; });
+  return rows;
 }

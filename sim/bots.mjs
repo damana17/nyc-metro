@@ -32,7 +32,7 @@ function project(g) {
     room.push(dead ? 0 : Math.min(E.line(g, l).sites, 4));
     T.push(dead ? 0 : E.shareValue(g, l));
   }
-  const players = g.players.map((p) => ({ cash: p.cash, hand: E.handSize(p), shares: [...p.shares] }));
+  const players = g.players.map((p, i) => ({ cash: p.cash + E.routeValue(g, i), hand: E.handSize(p), shares: [...p.shares] }));
   const totalTurns = S.roundLimit * g.players.length;
   return { D, room, T, prices: [...g.prices], sold: [...g.sold], players, turnsLeft: totalTurns - g.turn.n };
 }
@@ -88,6 +88,7 @@ function candidates(g, th, allow) {
       const need = E.trackNeed(l, o); if (!E.canPayArr(p, need)) continue;
       const cost = need.reduce((x, y) => x + y, 0);
       if (S.merges && big(l) && touches(l, o.to)) { real({ t: "track", l, ...o }); continue; }
+      if (S.goals && E.GOALS.some((x) => x.a === o.to || x.b === o.to)) { real({ t: "track", l, ...o }); continue; }
       push({ t: "track", l, ...o }, (a) => {
         a.players[me].hand -= cost;
         if (!L.net.has(o.to)) {

@@ -12,7 +12,8 @@
  *   - The game ends after roundLimit full rounds.
  *   - Final score: see SCORING below. The app's Tally uses "mtm".
  */
-import { SEED_HEX, SEED_NAMES, SEED_NOCROSS, ZONE_OF, LINES, V2D, neighbors, hexDist } from "../src/lib/game.jsx";
+import { SEED_HEX, SEED_NAMES, SEED_NOCROSS, ZONE_OF, LINES, V2D, neighbors, hexDist, GOALS } from "../src/lib/game.jsx";
+export { GOALS };
 
 export const NL = LINES.length;
 
@@ -40,6 +41,8 @@ export function rng(seed) {
 
 /* ── state ─────────────────────────────────────────────────────────── */
 export const DEFAULTS = { ...V2D, strict: true, autoAP: true, players: 3, scoring: "mtm", majBonus: 5, minBonus: 2,
+  investPerTurn: 3,     // pinned to the app's value when the first experiments ran (the app now defaults to 2)
+  goals: false,         // landmark goals: off unless an experiment turns them on
   seatCash: 0,          // extra starting cash per seat after the first (seat k gets k × this)
   firstRoundInvest: 0,  // if set, the share limit in round 1
   rotateStart: false,   // the start player moves one seat left each round
@@ -77,8 +80,29 @@ export function newGame(over = {}, seed = 1) {
   const picks = [...NAMED];
   for (let i = picks.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [picks[i], picks[j]] = [picks[j], picks[i]]; }
   for (let l = 0; l < NL; l++) g.stations.set(picks[l], l);
+  if (S.goals) {
+    const pool = GOALS.map((x) => x.id);
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    const pub = pool.slice(0, S.goalsPublic), rest = pool.slice(pub.length);
+    g.goals = { public: pub, done: {} };
+    g.secrets = g.players.map((p, i) => Array.from({ length: S.secretRoutes }, (_, k) => rest[(i * S.secretRoutes + k) % rest.length]));
+    g.stats.goals = [];
+  }
   return g;
 }
+export const goalLineE = (g, goal) => { for (let l = 0; l < NL; l++) { if (g.dead[l]) continue; const n = line(g, l).net; if (n.has(goal.a) && n.has(goal.b)) return l; } return -1; };
+export function checkGoalsE(g) {
+  if (!g.S.goals) return;
+  for (const id of g.goals.public) {
+    if (g.goals.done[id]) continue;
+    const l = goalLineE(g, GOALS.find((x) => x.id === id));
+    if (l < 0) continue;
+    cur(g).cash += g.S.goalBonus; g.prices[l] += g.S.goalPrice;
+    g.goals.done[id] = { l, by: g.turn.active, round: g.turn.round };
+    g.stats.goals.push({ id, round: g.turn.round, by: g.turn.active });
+  }
+}
+export const routeValue = (g, i) => (g.S.goals ? g.secrets[i].filter((id) => goalLineE(g, GOALS.find((x) => x.id === id)) >= 0).length * g.S.secretValue : 0);
 
 export function drawDisc(g) {
   const tot = g.bag.reduce((a, b) => a + b, 0);
@@ -220,6 +244,7 @@ export function apply(g, a) {
       need.forEach((n, c) => { p.hand[c] -= n; g.bag[c] += n; });
       g.track.set(a.k, a.l); touch(g); syncMarkers(g);
       if (S.merges) checkMerges(g, a.l);
+      if (S.goals) checkGoalsE(g);
       T.ap -= 1; break;
     }
     case "station": {
@@ -227,6 +252,7 @@ export function apply(g, a) {
       p.hand[a.l] -= c; g.burned += burn; g.bag[a.l] += c - burn;
       g.stations.set(a.h, a.l); touch(g); syncMarkers(g);
       if (S.merges) checkMerges(g, a.l);
+      if (S.goals) checkGoalsE(g);
       T.ap -= 1; break;
     }
     case "draw": {
@@ -315,7 +341,8 @@ export function cloneGame(g) {
     track: new Map(g.track), stations: new Map(g.stations), bag: [...g.bag], burned: g.burned, onboard: [...g.onboard],
     players: g.players.map((p) => ({ ...p, hand: [...p.hand], shares: [...p.shares] })), prices: [...g.prices], sold: [...g.sold],
     turn: { ...g.turn }, over: g.over, ver: g.ver, cache: Array(NL).fill(null), dead: [...g.dead],
-    stats: { divCalls: g.stats.divCalls, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0 },
+    goals: g.goals ? { public: g.goals.public, done: { ...g.goals.done } } : undefined, secrets: g.secrets,
+    stats: { divCalls: g.stats.divCalls, actions: {}, divPaid: 0, history: [], handCapped: 0, drawShort: 0, mergers: [], mergeBonus: 0, goals: [] },
   };
 }
 
@@ -360,7 +387,7 @@ export function bonuses(g) {
 }
 export function scores(g) {
   const b = bonuses(g);
-  return g.players.map((p, i) => p.cash + p.shares.reduce((a, n, l) => a + n * shareValue(g, l), 0) + b[i]);
+  return g.players.map((p, i) => p.cash + p.shares.reduce((a, n, l) => a + n * shareValue(g, l), 0) + b[i] + routeValue(g, i));
 }
 export function snapshot(g) {
   return { n: g.turn.n, round: g.turn.round, scores: scores(g), cash: g.players.map((p) => p.cash),

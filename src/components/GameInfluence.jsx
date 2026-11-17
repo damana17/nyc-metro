@@ -9,6 +9,7 @@ import {
   stationsOf, zonesOf, perShare, priceOf, sharesLeft, countLinks, syncMarkers,
   nearestStation, stationCost, burnCount,
   pendingMerges, mergePayouts, applyMerge, isDefunct, liveLines,
+  nextTurn, legalExtensions, collisionWatch, holders, goalById, goalLine, checkGoals, finalScore,
 } from "../lib/game.jsx";
 import { useTable, shareLink, cleanCode } from "../lib/sync.js";
 import { backend } from "../lib/storage.js";
@@ -58,7 +59,11 @@ export default function GameInfluence({ hidden, slot }) {
 
   const seatRef = useRef(undefined);
   const T = useTable("i", () => makeV2(), {
-    finish: (n) => { if (n.settings.strict) syncMarkers(n); },
+    finish: (n) => {
+      if (n.settings.strict) syncMarkers(n);
+      const notes = checkGoals(n, n.turn.active);
+      if (notes.length) n._notes = [...(n._notes || []), ...notes];
+    },
     who: (s) => {
       const sid = seatRef.current;
       const p = sid !== null && sid !== undefined ? s.players.find((x) => x.id === sid) : s.players.find((x) => x.id === s.turn.active);
@@ -118,35 +123,7 @@ export default function GameInfluence({ hidden, slot }) {
   useEffect(() => { if (isDefunct(state, activeLine) && live.length) setActiveLine(live[0].id); }, [state, activeLine]); // eslint-disable-line
 
   /* which extensions are legal for the active line, and what they cost */
-  const legal = useMemo(() => {
-    const lid = activeLine, out = {};
-    const net = lineNet(state, lid), deg = lineDegree(state, lid);
-    const cap = (h) => (state.stations[h]?.o === lid ? S.branchAt : 2);
-    net.forEach((h) => {
-      if ((deg[h] || 0) >= cap(h)) return;
-      const [c, r] = parseId(h);
-      neighbors(c, r).forEach(([nc, nr]) => {
-        const m = `${nc},${nr}`;
-        if (!map.hexes[m]) return;
-        const k = edgeKey(h, m);
-        if ((map.nocross || []).includes(k)) return;
-        if (state.track[k]) return;                        // exclusive
-        if ((deg[m] || 0) >= cap(m)) return;
-        let toll = [];
-        if (S.crossMode !== "free") {
-          const foreign = new Set();
-          [h, m].forEach((x) => { if (!state.stations[x]) occupants(state, x).forEach((o) => { if (o !== lid) foreign.add(o); }); });
-          if (foreign.size) {
-            if (S.crossMode === "station") return;          // blocked outright
-            toll = S.crossPay === "own" ? [[lid, S.crossDiscs]] : [...foreign].map((o) => [o, S.crossDiscs]);
-          }
-        }
-        const water = map.hexes[m] === "w" ? S.waterExtra : 0;
-        out[k] = { toll, water, target: m };
-      });
-    });
-    return out;
-  }, [state, activeLine, S, map]);
+  const legal = useMemo(() => legalExtensions(state, activeLine), [state, activeLine]);
 
   const canPay = (info) => {
     if (!info || !cur) return false;
@@ -280,11 +257,14 @@ export default function GameInfluence({ hidden, slot }) {
   }, "called for dividends");
 
   const endTurn = () => commit((s) => {
-    const n = s.players.length || 1;
-    const i = (s.players.findIndex((p) => p.id === s.turn.active) + 1) % n;
-    s.turn.active = s.players[i].id; s.turn.ap = s.settings.apPerTurn;
-    s.turn.invests = 0; s.turn.usedSlot = false;
-    if (i === 0) s.turn.round += 1;
+    // a compact picture of the board at every turn's end, for the game record
+    s.snapshots = [...(s.snapshots || []), {
+      round: s.turn.round, active: s.turn.active,
+      players: s.players.map((p) => ({ id: p.id, cash: p.cash, shares: { ...(p.shares || {}) }, hand: (p.hand || []).length })),
+      lines: LINES.map((l) => ({ id: l.id, stations: stationsOf(s, l.id), track: lineEdges(s, l.id).length, per: perShare(s, l.id), price: s.prices?.[l.id], sold: s.sold?.[l.id] })),
+      defunct: [...(s.defunct || [])], score: finalScore(s).map((r) => r.total),
+    }];
+    nextTurn(s);
   }, "ended turn");
 
   /* line a absorbs line d: bonuses to d's two biggest holders, d's shares sold at base price, d's track,
@@ -409,10 +389,27 @@ export default function GameInfluence({ hidden, slot }) {
     </div>
   );
 
-  const tallyRows = state.players.map((p) => {
-    const shares = Object.entries(p.shares || {}).reduce((a, [lid, n]) => a + n * (reach[lid]?.price || 0), 0);
-    return { p, cash: p.cash || 0, shares, total: (p.cash || 0) + shares };
-  }).sort((x, y) => y.total - x.total);
+  const score = finalScore(state);
+  const tallyRows = [...score].sort((x, y) => y.total - x.total);
+  const watch = collisionWatch(state);
+  const watchHexes = new Set(watch.flatMap((w) => w.hexes));
+  const openGoals = state.settings.goals && state.goals ? state.goals.public.filter((id) => !state.goals.done[id]) : [];
+  const goalHexes = new Set(openGoals.flatMap((id) => [goalById(id).a, goalById(id).b]));
+  const mySecrets = seat !== null && seat !== undefined && state.secrets ? state.secrets[seat] || [] : null;
+
+  const downloadRecord = () => {
+    const rec = { app: "nyc-metro", game: "influence", format: 1, exported: new Date().toISOString(), table: room || null,
+                  settings: state.settings, players: state.players.map((p) => ({ id: p.id, name: p.name })),
+                  moves: state.record || [], snapshots: state.snapshots || [], mergers: state.mergers || [],
+                  goals: state.goals || null, secrets: state.secrets || null, final: finalScore(state), round: state.turn.round };
+    const blob = new Blob([JSON.stringify(rec, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `nyc-metro-${room || "solo"}-${new Date().toISOString().slice(0, 10)}-r${state.turn.round}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    setStatus("Game record downloaded");
+  };
 
   const btn = "h-10 px-4 rounded-lg border border-[#CFCEC7] bg-white font-semibold text-[14px] hover:bg-[#F2F1EC] disabled:opacity-40 disabled:hover:bg-white";
   const seg = (on) => `h-8 px-3 text-[13px] font-semibold ${on ? "bg-[#111] text-white" : "bg-white text-[#111] hover:bg-[#F2F1EC]"}`;
@@ -434,7 +431,8 @@ export default function GameInfluence({ hidden, slot }) {
       )}
       {menu === "table" && (
         <Menu>
-          <Item onClick={() => setShowTally(true)} sub="Cash plus shares at today's price">Tally</Item>
+          <Item onClick={() => setShowTally(true)} sub="The final score if the game ended now">Tally</Item>
+          <Item onClick={downloadRecord} sub="Every move and the board each turn, as a file">Download game record</Item>
           <Item onClick={() => setShowTune(true)}>Tuning</Item>
           <Item onClick={() => { const t = tab === "map" ? "play" : "map"; setTab(t); setPending(null); setMode(t === "play" ? "track" : "terrain"); }}>
             {tab === "map" ? "Back to play" : "Edit map"}</Item>
@@ -462,19 +460,29 @@ export default function GameInfluence({ hidden, slot }) {
 
       {(showTally || (over && !tallySeen)) && (
         <Sheet title={over ? "Final tally" : "Tally if the game ended now"} onClose={() => { setShowTally(false); setTallySeen(true); }}>
+          <div className="overflow-x-auto">
           <table className="w-full text-[15px] tabular-nums">
             <thead><tr className="text-[12px] uppercase tracking-wide text-[#6B6B66] border-b border-[#E2E1DB]">
-              <th className="text-left py-2 w-8"></th><th className="text-left py-2">Investor</th><th className="text-right py-2">Cash</th><th className="text-right py-2">Shares</th><th className="text-right py-2">Total</th></tr></thead>
+              <th className="text-left py-2 w-8"></th><th className="text-left py-2">Investor</th><th className="text-right py-2 px-2">Cash</th><th className="text-right py-2 px-2">Shares</th>
+              {S.endBonuses && <th className="text-right py-2 px-2">Bonuses</th>}{S.goals && <th className="text-right py-2 px-2">Routes</th>}<th className="text-right py-2">Total</th></tr></thead>
             <tbody>
               {tallyRows.map((r, i) => (
-                <tr key={r.p.id} className={`border-b border-[#EEEDE8] ${i === 0 ? "font-bold" : ""}`}>
-                  <td className="py-2.5 text-[#6B6B66]">{i + 1}</td><td>{r.p.name}</td>
-                  <td className="text-right">${r.cash}</td><td className="text-right">${r.shares}</td><td className="text-right">${r.total}</td>
+                <tr key={r.id} className={`border-b border-[#EEEDE8] ${i === 0 ? "font-bold" : ""}`}>
+                  <td className="py-2.5 text-[#6B6B66]">{i + 1}</td><td>{r.name}</td>
+                  <td className="text-right px-2">${r.cash}</td><td className="text-right px-2">${r.shares}</td>
+                  {S.endBonuses && <td className="text-right px-2">${r.bonuses}</td>}
+                  {S.goals && <td className="text-right px-2">{over || r.id === seat ? `$${r.routes}` : "?"}</td>}
+                  <td className="text-right">${over || !S.goals || r.id === seat ? r.total : r.total - r.routes}{!over && S.goals && r.id !== seat ? "+" : ""}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="text-[12px] text-[#6B6B66] mt-3">Shares are valued at today&rsquo;s price. Merger bonuses are not included.</p>
+          </div>
+          <p className="text-[12px] text-[#6B6B66] mt-3">
+            Shares count at their base price (the price without the per-sale step).
+            {S.endBonuses ? ` Each line still running pays its biggest holder ${S.majBonus}× its base price and the second biggest ${S.minBonus}×.` : ""}
+            {S.goals ? ` Secret routes are worth $${S.secretValue} each if one line links them; rivals' routes stay hidden until the game ends.` : ""}
+          </p>
         </Sheet>
       )}
 
@@ -499,7 +507,15 @@ export default function GameInfluence({ hidden, slot }) {
             {N("Starting share price", "startPrice", 5)}
             {N("Price step per share sold", "stepPerShare", 5)}
             {N("Price growth per dividend", "priceGrowth", 1, "×")}
-            {N("Invests per turn", "investPerTurn")}
+            {N("Shares per turn", "investPerTurn")}
+            {Sel("Turn order", "turnOrder", [["snake", "snake: 1-2-3, 3-2-1"], ["rotate", "start player moves left"], ["fixed", "fixed: 1-2-3 every round"]])}
+            <label className="flex items-center justify-between gap-2 py-0.5"><span className="text-xs text-stone-600">End-of-game holder bonuses</span>
+              <input type="checkbox" checked={!!S.endBonuses} onChange={(e) => commit((s2) => { s2.settings.endBonuses = e.target.checked; })} /></label>
+            <label className="flex items-center justify-between gap-2 py-0.5"><span className="text-xs text-stone-600">Landmark goals and secret routes</span>
+              <input type="checkbox" checked={!!S.goals} onChange={(e) => commit((s2) => { s2.settings.goals = e.target.checked; })} /></label>
+            {N("Goal bonus to the player who completes it ($)", "goalBonus", 5)}
+            {N("Goal raises the line's base price by ($)", "goalPrice")}
+            {N("Secret route value ($)", "secretValue", 5)}
             {N("Wild share costs", "wildCost", 1, "disc")}
             {N("Starting cash", "startCash", 10)}
             {N("$ per station", "perStation")}
@@ -588,7 +604,7 @@ export default function GameInfluence({ hidden, slot }) {
               if (!map.hexes[id]) return null;
               const x = cx(c, r), y = cy(c, r);
               const ring = sel === id ? "#111" : pending === id ? "#111" : changed.hexes.has(id) ? "#E58A00" : null;
-              if (!ring) return null;
+              if (!ring) return watchHexes.has(id) ? <g key={"o" + id} pointerEvents="none"><polygon points={hexPath(x, y)} fill="#D9302512" stroke="#D93025" strokeWidth="3" strokeDasharray="4 4" /><text x={x} y={y - 18} textAnchor="middle" style={{ fontSize: 13, fontWeight: 700 }} fill="#D93025">⚡</text></g> : null;
               return <polygon key={"o" + id} points={hexPath(x, y)} fill={changed.hexes.has(id) && sel !== id ? "#FFB0001F" : "none"} stroke={ring}
                               strokeWidth={pending === id ? 4 : 3} strokeDasharray={pending === id || sel === id ? "" : "8 5"} pointerEvents="none" />;
             })}
@@ -619,6 +635,7 @@ export default function GameInfluence({ hidden, slot }) {
               if (!stn && !nm) return null;
               return (
                 <g key={"m" + id} onClick={() => onHex(id, true)} className="cursor-pointer">
+                  {goalHexes.has(id) && <circle cx={x} cy={y} r="19" fill="none" stroke="#C99A00" strokeWidth="3" strokeDasharray="3 3" />}
                   {nm && !stn && <circle cx={x} cy={y} r="6" fill="#111" stroke="#fff" strokeWidth="2.5" />}
                   {stn && <>
                     <circle cx={x} cy={y} r="13" fill="#fff" stroke="#111" strokeWidth="3" />
@@ -684,6 +701,31 @@ export default function GameInfluence({ hidden, slot }) {
               bag {state.bag.length} · board {state.onboard.length} · gone {state.burned.length}
             </span>
           </div>
+
+          {watch.length > 0 && (
+            <div className="mt-3 text-[13px] space-y-1">
+              {watch.map((w) => (
+                <div key={`${w.a}-${w.b}`} className="flex items-center gap-1.5 flex-wrap text-[#3A3A36]">
+                  <span className="text-[#D93025] font-bold">⚡</span><Bullet lid={w.a} size={18} /><Bullet lid={w.b} size={18} />
+                  <span>{lineOf(w.a)?.name} ({w.sa}) and {lineOf(w.b)?.name} ({w.sb}) are one track apart{w.ready ? ": the next track there merges them" : `: a merge needs ${S.mergeAt} stations each`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {S.goals && state.goals && (
+            <div className="mt-3 text-[13px]">
+              <div className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66] mb-1">Landmark goals · ${S.goalBonus} to whoever completes one</div>
+              {state.goals.public.map((id) => { const g = goalById(id), d = state.goals.done[id];
+                return <div key={id} className={d ? "text-[#9A9A94] line-through" : ""}><span className="text-[#C99A00]">◎</span> {g.name}{d ? ` · ${lineOf(d.line)?.name}, round ${d.round}` : ""}</div>; })}
+              {mySecrets ? (
+                <div className="mt-1.5"><span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">Your secret routes · ${S.secretValue} each at the end</span>
+                  {mySecrets.map((id) => { const g = goalById(id), ok = goalLine(state, g) !== undefined;
+                    return <div key={id} className={ok ? "text-[#1E6B36]" : ""}>{ok ? "✓" : "○"} {g.name}</div>; })}
+                </div>
+              ) : <div className="mt-1 text-[12px] text-[#6B6B66]">Pick your seat to see your secret routes.</div>}
+            </div>
+          )}
 
           {dueMerges.map(({ a, d }) => {
             const pays = mergePayouts(state, d).filter((x) => x.bonus || x.sale);
@@ -761,7 +803,7 @@ export default function GameInfluence({ hidden, slot }) {
                     <th className="text-right font-semibold pb-2" title="Stations">Stn</th>
                     <th className="text-right font-semibold pb-2" title="Zones reached">Zn</th>
                     <th className="text-right font-semibold pb-2" title="Dividend per share">Div</th>
-                    <th className="text-right font-semibold pb-2" title="Shares left">Left</th>
+                    <th className="text-left font-semibold pb-2 pl-2" title="Biggest holder (majority bonus) / second biggest (minority)">Leads</th>
                     <th className="text-right font-semibold pb-2 pr-1">Buy</th>
                   </tr>
                 </thead>
@@ -777,12 +819,14 @@ export default function GameInfluence({ hidden, slot }) {
                             <Bullet lid={l.id} size={24} />
                             <span className="font-semibold">{l.name}</span>
                             {S.safeAt > 0 && rc.stations >= S.safeAt && <span className="text-[10px] px-1.5 rounded bg-[#1E6B36] text-white font-semibold" title={`${S.safeAt}+ stations: can't be absorbed`}>SAFE</span>}
+                            {S.safeAt > 0 && rc.stations < S.safeAt && rc.stations >= S.safeAt - 2 && <span className="text-[10px] px-1.5 rounded bg-[#E9F3EC] text-[#1E6B36] font-semibold" title={`${S.safeAt - rc.stations} more station${S.safeAt - rc.stations > 1 ? "s" : ""} and it can't be absorbed`}>SAFE IN {S.safeAt - rc.stations}</span>}
                           </span>
                         </td>
                         <td className="text-right">{rc.stations}</td>
                         <td className="text-right">{rc.zones.length}</td>
                         <td className="text-right font-bold">${rc.per}</td>
-                        <td className="text-right text-[#6B6B66]">{rc.left}</td>
+                        <td className="text-left pl-2 text-[12px] leading-tight">{(() => { const h = holders(state, l.id);
+                          return h.major.length ? <><b>{h.major.map((x) => x.name).join(" = ")}</b> <span className="text-[#6B6B66]">{h.major[0].n}</span>{h.minor.length ? <span className="text-[#6B6B66]"><br />{h.minor.map((x) => x.name).join(" = ")} {h.minor[0].n}</span> : null}</> : <span className="text-[#9A9A94]">nobody</span>; })()}</td>
                         <td className="text-right pl-2">
                           <span className="inline-flex gap-1">
                             <button disabled={noBuy} onClick={() => invest(l.id, false)} title={`1 ${l.name} disc + $${rc.price}`}
@@ -872,7 +916,8 @@ export default function GameInfluence({ hidden, slot }) {
                       })}
                     </div>
                     <div className="mt-2 text-[12px] text-[#6B6B66] tabular-nums">
-                      {(p.hand || []).length} discs · dividends ${div} · shares worth ${port} · <b className="text-[#111]">total ${(p.cash || 0) + port}</b>
+                      {(p.hand || []).length} discs · dividends ${div} · shares ${score.find((r) => r.id === p.id)?.shares ?? 0}
+                      {S.endBonuses ? ` · bonuses $${score.find((r) => r.id === p.id)?.bonuses ?? 0}` : ""} · <b className="text-[#111]">score ${(score.find((r) => r.id === p.id)?.total ?? 0) - (S.goals && p.id !== seat && !over ? (score.find((r) => r.id === p.id)?.routes ?? 0) : 0)}{S.goals && p.id !== seat && !over ? "+" : ""}</b>
                     </div>
                   </div>
                 );

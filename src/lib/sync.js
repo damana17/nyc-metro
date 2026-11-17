@@ -74,7 +74,12 @@ export function useTable(ns, makeFresh, { finish, who } = {}) {
       const r = op.mut(n);
       if (r && typeof r === "object" && r !== n) n = clone(r);   // a move may hand back a whole new board; never share it
       if (finishRef.current) finishRef.current(n);
-      if (op.note) n.log = [{ who: op.who, note: op.note, t: op.t }, ...(n.log || [])].slice(0, 80);
+      const notes = [...(op.note ? [op.note] : []), ...(n._notes || [])];
+      delete n._notes;
+      notes.forEach((note) => {
+        n.log = [{ who: op.who, note, t: op.t }, ...(n.log || [])].slice(0, 80);
+        n.record = [...(n.record || []), { who: op.who, note, t: op.t, round: n.turn?.round }];   // the whole game, for export
+      });
     }
     return n;
   }, []);

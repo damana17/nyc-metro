@@ -45,6 +45,14 @@ For multiplayer, add two repository **Variables** (Settings → Secrets and vari
 
 `netlify.toml` is still here if you ever move it to Netlify.
 
+## Playtest features
+
+- **Turn order** (Tuning): rotate (default: the start player moves one seat left each round), snake, or fixed. With **1 share per turn** (default) this was the fairest combination in simulation once merges were in: 37 / 30 / 34 win rate by seat at 3 players. At 4 players the last seat is still weak.
+- **Score**: the Tally is the final score. Shares count at their **base price** (without the per-sale step, which used to let you score by buying anything), plus **end-of-game holder bonuses** on every line still running, plus **secret routes**.
+- **Merge watch**: the Lines table shows who leads each line (majority / minority), a SAFE IN n tag as a line nears the safe size, and ⚡ marks hexes where one more track would make two lines touch.
+- **Landmark goals**: three public goals (the first line to link two landmarks pays $30 to the player who completed it and raises that line's base price by $5) and two secret routes per player ($30 each at the end). Pick a seat to see yours. Rivals' routes are hidden on screen but are in the shared game state: honour system.
+- **Game record**: ⋯ → Download game record saves every move and the board each turn. Put the files in one folder and run `node sim/.build/replay.mjs <folder>` (after bundling, see `sim/`) to compare the table's play with the bots'.
+
 ---
 
 ## How it's laid out
