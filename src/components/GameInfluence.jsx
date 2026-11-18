@@ -47,6 +47,7 @@ export default function GameInfluence({ hidden, slot }) {
   const [reveal, setReveal] = useState(true);
   const [status, setStatus] = useState("");
   const [showTally, setShowTally] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [tallySeen, setTallySeen] = useState(false);
   const [menu, setMenu] = useState(null);
   const [side, setSide] = useState("lines");
@@ -242,6 +243,7 @@ export default function GameInfluence({ hidden, slot }) {
     if (s.turn.invests >= s.settings.investPerTurn) return;
     const price = priceOf(s, lid);
     if (s.settings.strict) {
+      if (s.turn.usedSlot && !s.turn.invests) return;   // the market action went to dividends this turn
       if (sharesLeft(s, lid) <= 0) return;
       if (p.cash < price) return;
       if (wild) {
@@ -258,7 +260,7 @@ export default function GameInfluence({ hidden, slot }) {
     }
     p.cash -= price; p.shares[lid] = (p.shares[lid] || 0) + 1; s.sold[lid] += 1;
     s.turn.invests += 1;
-    if (s.settings.autoAP && !s.turn.usedSlot) { s.turn.usedSlot = true; s.turn.ap = Math.max(0, s.turn.ap - 1); }
+    if (!s.turn.usedSlot) { s.turn.usedSlot = true; if (s.settings.autoAP) s.turn.ap = Math.max(0, s.turn.ap - 1); }
   }, `bought a ${lineOf(lid)?.name} share`);
 
   const callDividends = () => commit((s) => {
@@ -443,6 +445,7 @@ export default function GameInfluence({ hidden, slot }) {
         <Menu>
           <Item onClick={() => setShowTally(true)} sub="The final score if the game ended now">Tally</Item>
           <Item onClick={downloadRecord} sub="Every move and the board each turn, as a file">Download game record</Item>
+          <Item onClick={() => setShowGuide(true)} sub="What you can do on a turn">Turn guide</Item>
           <Item onClick={() => setShowTune(true)}>Tuning</Item>
           <Item onClick={() => { const t = tab === "map" ? "play" : "map"; setTab(t); setPending(null); setMode(t === "play" ? "track" : "terrain"); }}>
             {tab === "map" ? "Back to play" : "Edit map"}</Item>
@@ -495,6 +498,94 @@ export default function GameInfluence({ hidden, slot }) {
           </p>
         </Sheet>
       )}
+
+      {showGuide && (() => {
+        const ap = S.apPerTurn, chip = (t, tone) => (
+          <span className={`inline-flex items-center h-6 px-2 rounded-md text-[12px] font-bold whitespace-nowrap ${tone === "ap" ? "bg-[#111] text-white" : tone === "free" ? "bg-[#E9F3EC] text-[#1E6B36]" : "bg-[#F2F1EC] text-[#3A3A36]"}`}>{t}</span>
+        );
+        const Row = ({ title, cost, children }) => (
+          <div className="py-3 border-b border-[#EEEDE8] last:border-0">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-[15px] font-bold">{title}</span>
+              <span className="flex gap-1 flex-wrap">{cost}</span>
+            </div>
+            <div className="text-[13px] text-[#3A3A36] mt-1 leading-relaxed">{children}</div>
+          </div>
+        );
+        const H = ({ children, note }) => (
+          <div className="mt-5 first:mt-0 mb-1 flex items-baseline gap-2 flex-wrap">
+            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B66]">{children}</h3>
+            {note && <span className="text-[12px] text-[#9A9A94]">{note}</span>}
+          </div>
+        );
+        const orderText = { rotate: "The start player moves one seat left each round.", snake: "Turn order reverses every round (1-2-3, then 3-2-1).", fixed: "Same order every round." }[S.turnOrder || "fixed"];
+        const cross = S.crossMode === "free" ? "Crossing another line is free." : S.crossMode === "station" ? "You may only cross another line where a station stands." : `Crossing another line's track costs ${S.crossDiscs} disc${S.crossDiscs > 1 ? "s" : ""} of ${S.crossPay === "own" ? "your line's" : "the crossed line's"} colour, unless there's a station there.`;
+        return (
+          <Sheet title="Turn guide" onClose={() => setShowGuide(false)} wide>
+            <p className="text-[14px] text-[#3A3A36] mb-4">
+              On your turn you have <b>{ap} action points</b>. Spend them in any order, on any mix of the actions below, then end your turn.
+              Lines belong to nobody: you can build any line you hold discs for.
+            </p>
+            <div className="grid gap-x-8 lg:grid-cols-2">
+              <div>
+                <H note="each one costs 1 action point, as often as you like">Building and drawing</H>
+                <Row title="Lay track" cost={<>{chip("1 AP", "ap")}{chip(`1 disc of the line${S.waterExtra ? `, +${S.waterExtra} on water` : ""}`)}</>}>
+                  Extend a line one hex from anywhere it already reaches. A hex holds at most 2 track ends of a line, or {S.branchAt} at that line's own station.
+                  Central Park can't be crossed. {cross}
+                </Row>
+                <Row title="Build a station" cost={<>{chip("1 AP", "ap")}{chip(`${S.stationBase} − distance discs`)}</>}>
+                  On a hex the line reaches. It costs {S.stationBase} discs minus the distance to the nearest station (never below {S.stationMin}), so stations far from others are cheap or free.
+                  {` ${Math.round((S.burnFrac ?? 0.5) * 100)}%`} of the discs paid (rounded {S.burnRound}) are destroyed, the rest go back to the bag.
+                  Each station adds ${S.perStation} to the line's dividend.
+                </Row>
+                <Row title="Draw" cost={<>{chip("1 AP", "ap")}</>}>
+                  Take {S.drawCount} discs from the bag, up to your hand limit of {S.handLimit}.
+                </Row>
+              </div>
+              <div>
+                <H note="one of these per turn">The market</H>
+                <Row title={S.investPerTurn > 1 ? `Buy up to ${S.investPerTurn} shares` : "Buy a share"} cost={<>{chip("1 AP", "ap")}{chip("price")}{chip("1 disc of the line, or 2 wild")}</>}>
+                  The price is the line's base price plus ${S.stepPerShare} for every share already sold, so early shares are cheaper.
+                  Pay with one disc of that line, or {S.wildCost} discs of any colour (Wild).
+                </Row>
+                <Row title="Call dividends" cost={<>{chip("1 AP", "ap")}</>}>
+                  Every player is paid for every share they hold: ${S.perStation} per station plus ${S.perZone} per zone the line reaches, adjusted by this round&rsquo;s event.
+                  Then each line&rsquo;s base price rises by what it paid.
+                </Row>
+                <H note="no action points">Free</H>
+                <Row title="Merge" cost={<>{chip("free", "free")}</>}>
+                  When two lines touch and both have {S.mergeAt}+ stations, the one with more absorbs the other
+                  {S.safeAt ? ` (a line with ${S.safeAt}+ stations can't be absorbed)` : ""}. The absorbed line&rsquo;s biggest holder gets {S.majBonus}× its base price,
+                  the second biggest {S.minBonus}×, then every holder sells those shares at base price. Press <b>Merge now</b> in the turn panel.
+                </Row>
+                {S.goals && (
+                  <Row title="Complete a landmark goal" cost={<>{chip("automatic", "free")}</>}>
+                    The first line to link a goal&rsquo;s two landmarks pays ${S.goalBonus} to whoever completed it, and that line&rsquo;s base price rises ${S.goalPrice}.
+                  </Row>
+                )}
+                <Row title="End your turn" cost={<>{chip("free", "free")}</>}>Unused action points are lost.</Row>
+              </div>
+            </div>
+
+            <H>Each round</H>
+            <p className="text-[13px] text-[#3A3A36] leading-relaxed">
+              {orderText}{S.events ? " A city event card is revealed at the start of each round and lasts for that round; next round's card is shown under it." : ""}
+            </p>
+
+            <H>Game end and score</H>
+            <p className="text-[13px] text-[#3A3A36] leading-relaxed">
+              The game ends after round {S.roundLimit}. Your score is your cash, plus every share at its base price
+              {S.endBonuses ? `, plus ${S.majBonus}× and ${S.minBonus}× base-price bonuses to the biggest and second-biggest holders of each line still running` : ""}
+              {S.goals ? `, plus $${S.secretValue} for each of your secret routes that one line links` : ""}. The Tally shows it at any time.
+            </p>
+            <p className="text-[12px] text-[#9A9A94] mt-3">
+              Everyone starts with ${S.startCash} and {S.startingHand} discs{S.seatCash4 ? `; with 4 or more players each later seat starts with $${S.seatCash4} more` : ""}.
+              {S.strict ? " Rules are being enforced." : " Rules aren't enforced right now: the app lets you do anything, so the table keeps itself honest. Turn on Enforce rules in the ⋯ menu to have it check."}
+              {" "}This guide follows the game&rsquo;s Tuning, so changing a setting changes the numbers here.
+            </p>
+          </Sheet>
+        );
+      })()}
 
       {showTune && (
         <Sheet title="Tuning" onClose={() => setShowTune(false)} wide>
@@ -735,6 +826,7 @@ export default function GameInfluence({ hidden, slot }) {
           <div className="flex items-center gap-3 mt-2 text-[13px]">
             <button onClick={undo} disabled={!T.canUndo} className="text-[#3A3A36] underline disabled:no-underline disabled:text-[#B5B4AD]">↶ Undo my move</button>
             <button onClick={() => setShowTally(true)} className="text-[#3A3A36] underline">Tally</button>
+            <button onClick={() => setShowGuide(true)} className="text-[#3A3A36] underline">Turn guide</button>
             <span className="ml-auto text-[12px] text-[#6B6B66] tabular-nums" title="Discs in the bag · on the board · destroyed">
               bag {state.bag.length} · board {state.onboard.length} · gone {state.burned.length}
             </span>
